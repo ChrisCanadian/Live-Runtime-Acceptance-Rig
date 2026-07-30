@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "live-runtime-acceptance-rig"
+version = "0.1.0"
+description = "A small acceptance framework for verifying durable effects through a live application boundary."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "Christopher Campbell"}]
+keywords = ["acceptance-testing", "integration-testing", "observability", "sqlite", "fastapi"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/ChrisCanadian/Live-Runtime-Acceptance-Rig"
+Issues = "https://github.com/ChrisCanadian/Live-Runtime-Acceptance-Rig/issues"
+Changelog = "https://github.com/ChrisCanadian/Live-Runtime-Acceptance-Rig/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+example = [
+  "fastapi>=0.110",
+  "httpx>=0.27",
+]
+dev = [
+  "pytest>=8.0",
+  "fastapi>=0.110",
+  "httpx>=0.27",
+]
+
+[project.scripts]
+live-runtime-rig = "live_runtime_rig.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]
