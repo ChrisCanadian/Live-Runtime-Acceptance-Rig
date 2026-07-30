@@ -52,7 +52,6 @@ def test_installed_entry_points_work_outside_repository(tmp_path) -> None:
             "pip",
             "install",
             "--no-deps",
-            "--no-build-isolation",
             str(PROJECT_ROOT),
         ],
         cwd=outside_directory,
