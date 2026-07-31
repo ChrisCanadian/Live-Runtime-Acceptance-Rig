@@ -4,11 +4,14 @@ import io
 import json
 from pathlib import Path
 
-from live_runtime_rig_examples.fastapi_sqlite.database_adapter import create_database_adapter
 from live_runtime_rig.config import RigConfig
 from live_runtime_rig.console import Console
 from live_runtime_rig.redaction import Redactor
 from live_runtime_rig.runner import RigRunner
+from live_runtime_rig_examples.fastapi_sqlite.database import initialize_database
+from live_runtime_rig_examples.fastapi_sqlite.database_adapter import (
+    create_database_adapter,
+)
 
 
 class UnhealthyRuntime:
@@ -45,6 +48,7 @@ class MarkerCase:
 
 def _config(tmp_path: Path) -> RigConfig:
     config_file = tmp_path / ".env"
+    initialize_database(tmp_path / "work_orders.sqlite")
     config_file.write_text("# test\n", encoding="utf-8")
     return RigConfig(
         config_file=config_file,

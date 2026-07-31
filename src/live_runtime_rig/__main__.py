@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from .config import RigConfig
 from .runner import RigRunner, RunnerOptions
@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Redact sensitive values and local paths from textual evidence.",
     )
     parser.add_argument(
+        "--allow-env-overrides",
+        action="store_true",
+        help="Allow ambient RIG_* values to override the configuration file.",
+    )
+    parser.add_argument(
         "--cleanup-manifest-only",
         action="store_true",
         help=(
@@ -57,7 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    config = RigConfig.load(args.config)
+    config = RigConfig.load(
+        args.config,
+        allow_environment_overrides=args.allow_env_overrides,
+    )
     options = RunnerOptions(
         quiet=args.quiet,
         verbose=args.verbose,

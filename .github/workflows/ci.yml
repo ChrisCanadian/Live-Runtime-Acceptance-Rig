@@ -38,6 +38,11 @@ jobs:
       - name: Run automated tests
         run: python -m pytest -q
 
+      - name: Seed the explicit toy database fixture
+        run: >-
+          python -m live_runtime_rig_examples.fastapi_sqlite.seed
+          --database var/work_orders.db
+
       - name: Run passing module campaign
         run: >-
           python -m live_runtime_rig

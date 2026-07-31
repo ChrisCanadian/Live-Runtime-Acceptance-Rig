@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import (
+    Any,
+    Literal,
+    Protocol,
+    runtime_checkable,
+)
 
 from .assertions import CheckStatus
 
@@ -34,6 +40,61 @@ class CleanupEntry:
     cleanup_instruction: str = ""
 
 
+@dataclass(frozen=True)
+class BackupVerification:
+    """Independent verification result for one exact backup target."""
+
+    target: str
+    verified: bool
+    integrity: str
+    size_bytes: int
+    sha256: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "target": self.target,
+            "verified": self.verified,
+            "integrity": self.integrity,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+        }
+
+
+@runtime_checkable
+class BackupVerifier(Protocol):
+    """Explicit verifier required for non-file backup evidence."""
+
+    def verify(self, proof: BackupProof) -> BackupVerification: ...
+
+
+@dataclass(frozen=True)
+class BackupProof:
+    """Adapter-reported backup metadata that the runner must independently verify."""
+
+    evidence_type: Literal["file", "remote"]
+    target: str
+    verified: bool
+    integrity: str
+    size_bytes: int
+    sha256: str
+    method: str
+    verifier: BackupVerifier | None = field(default=None, repr=False, compare=False)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_type": self.evidence_type,
+            "target": self.target,
+            "verified": self.verified,
+            "integrity": self.integrity,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "method": self.method,
+            "verifier": (
+                type(self.verifier).__name__ if self.verifier is not None else None
+            ),
+        }
+
+
 @dataclass
 class CaseContext:
     """State shared with cases without exposing runner internals."""
@@ -45,6 +106,22 @@ class CaseContext:
     evidence: Any
     tracer: Any
     state: dict[str, Any] = field(default_factory=dict)
+    _cleanup_registrar: Callable[[Sequence[CleanupEntry]], None] | None = field(
+        default=None,
+        repr=False,
+    )
+
+    def register_cleanup(self, entry: CleanupEntry) -> None:
+        """Persist one cleanup entry immediately after its mutation succeeds."""
+
+        self.register_cleanups((entry,))
+
+    def register_cleanups(self, entries: Sequence[CleanupEntry]) -> None:
+        """Persist a validated cleanup batch atomically."""
+
+        if self._cleanup_registrar is None:
+            raise RuntimeError("cleanup registration is unavailable")
+        self._cleanup_registrar(entries)
 
 
 @dataclass
@@ -80,7 +157,7 @@ class DatabaseAdapter(Protocol):
 
     def verify_connection(self) -> Mapping[str, Any]: ...
 
-    def backup(self, destination: Path) -> Mapping[str, Any]: ...
+    def backup(self, destination: Path) -> BackupProof: ...
 
     def integrity_check(self, path: Path | None = None) -> Mapping[str, Any]: ...
 
@@ -100,6 +177,8 @@ class DatabaseAdapter(Protocol):
         *,
         notes: str = "",
     ) -> CleanupEntry: ...
+
+    def close(self) -> None: ...
 
 
 class AcceptanceCase(Protocol):

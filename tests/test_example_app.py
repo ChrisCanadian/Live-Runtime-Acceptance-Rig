@@ -3,11 +3,15 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from live_runtime_rig_examples.fastapi_sqlite.app import create_app
-from live_runtime_rig_examples.fastapi_sqlite.database_adapter import WorkOrderDatabaseAdapter
+from live_runtime_rig_examples.fastapi_sqlite.database import initialize_database
+from live_runtime_rig_examples.fastapi_sqlite.database_adapter import (
+    WorkOrderDatabaseAdapter,
+)
 
 
 def test_work_order_create_update_archive_and_durable_readback(tmp_path) -> None:
     database_path = tmp_path / "work_orders.sqlite"
+    initialize_database(database_path)
     database = WorkOrderDatabaseAdapter(database_path)
     protected_before = database.protected_state_snapshot()
     marker = "ACCEPTANCE_EXAMPLE"
@@ -58,6 +62,7 @@ def test_work_order_create_update_archive_and_durable_readback(tmp_path) -> None
 
 def test_invalid_input_returns_structured_422(tmp_path) -> None:
     database_path = tmp_path / "work_orders.sqlite"
+    initialize_database(database_path)
     with TestClient(create_app(database_path)) as client:
         response = client.post(
             "/work-orders",

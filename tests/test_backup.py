@@ -28,10 +28,10 @@ def test_verified_backup_uses_native_api_and_passes_integrity(tmp_path) -> None:
 
     result = verified_sqlite_backup(source, destination)
 
-    assert result["verified"] is True
-    assert result["integrity"] == "ok"
-    assert result["method"] == "sqlite3.Connection.backup"
-    assert len(result["sha256"]) == 64
+    assert result.verified is True
+    assert result.integrity == "ok"
+    assert result.method == "sqlite3.Connection.backup"
+    assert len(result.sha256) == 64
     with read_only_connection(destination) as connection:
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "example"
 

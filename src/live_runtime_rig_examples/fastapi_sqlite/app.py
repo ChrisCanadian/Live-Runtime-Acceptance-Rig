@@ -10,7 +10,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
-from .database import connect, initialize_database
+from .database import connect
 
 
 def utc_now() -> str:
@@ -45,7 +45,7 @@ def _row_payload(row) -> dict:
 
 
 def create_app(database_path: Path) -> FastAPI:
-    initialize_database(database_path)
+
     app = FastAPI(title="Work Order Example", version="1.0")
 
     @app.get("/health")

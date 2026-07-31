@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import venv
+from importlib.util import find_spec
 from pathlib import Path
 
+from live_runtime_rig_examples.fastapi_sqlite.database import initialize_database
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE_CONFIG = (
-    PROJECT_ROOT / "examples" / "fastapi_sqlite" / ".env.example"
-)
 
 
 def _installed_paths(virtual_environment: Path) -> tuple[Path, Path]:
@@ -35,10 +33,42 @@ def _assert_passing_campaign(result: subprocess.CompletedProcess[str]) -> None:
     assert "RESULT: PASS" in result.stdout
 
 
-def test_installed_entry_points_work_outside_repository(tmp_path) -> None:
+def test_installed_entry_points_work_outside_repository_with_dev_dependencies(
+    tmp_path,
+) -> None:
+    assert find_spec("fastapi") is not None, "install .[dev] or .[example] before this test"
     virtual_environment = tmp_path / "installed-environment"
     outside_directory = tmp_path / "outside-repository"
     outside_directory.mkdir()
+    database_path = tmp_path / "work_orders.sqlite"
+    evidence_path = tmp_path / "evidence"
+    initialize_database(database_path)
+    example_config = tmp_path / "installed-example.env"
+    example_config.write_text(
+        "\n".join(
+            (
+                "RIG_RUNTIME_ADAPTER="
+                "live_runtime_rig_examples.fastapi_sqlite.runtime_adapter:"
+                "create_runtime_adapter",
+                "RIG_DATABASE_ADAPTER="
+                "live_runtime_rig_examples.fastapi_sqlite.database_adapter:"
+                "create_database_adapter",
+                "RIG_CASES="
+                "live_runtime_rig_examples.fastapi_sqlite.cases:register_cases",
+                f"RIG_DATABASE_PATH={database_path.as_posix()}",
+                f"RIG_EVIDENCE_DIR={evidence_path.as_posix()}",
+                "RIG_APPLICATION_LABEL=installed-test",
+                "RIG_PUBLIC_SAFE=true",
+                "RIG_INTENTIONAL_FAILURE=false",
+                "RIG_NETWORK_REQUIRED=false",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # The outer test environment is installed with .[dev]. Expose those example
+    # dependencies while installing the package itself without dependency resolution;
+    # core-only installations are not expected to run the FastAPI example adapters.
     venv.EnvBuilder(
         with_pip=True,
         system_site_packages=True,
@@ -67,7 +97,7 @@ def test_installed_entry_points_work_outside_repository(tmp_path) -> None:
         [
             str(console_command),
             "--config",
-            str(EXAMPLE_CONFIG),
+            str(example_config),
             "--public-safe",
         ],
         cwd=outside_directory,
@@ -85,7 +115,7 @@ def test_installed_entry_points_work_outside_repository(tmp_path) -> None:
             "-m",
             "live_runtime_rig",
             "--config",
-            str(EXAMPLE_CONFIG),
+            str(example_config),
             "--public-safe",
         ],
         cwd=outside_directory,

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 _AUTHORIZATION = re.compile(
     r"(?i)\b(authorization)\s*[:=]\s*([^\s,;]+(?:\s+[^\s,;]+)?)"
@@ -82,11 +82,15 @@ class Redactor:
             return self.redact_text(value)
         if isinstance(value, Path):
             return self.redact_text(str(value))
-        if isinstance(value, dict):
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, Mapping):
             return {
                 self.redact_text(str(key)): self.redact_value(item)
                 for key, item in value.items()
             }
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, (list, tuple)):
             return [self.redact_value(item) for item in value]
-        return value
+        raise TypeError(
+            f"evidence values must be JSON-compatible, got {type(value).__name__}"
+        )

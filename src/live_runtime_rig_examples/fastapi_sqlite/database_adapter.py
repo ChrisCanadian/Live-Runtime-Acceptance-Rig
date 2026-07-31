@@ -4,20 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from live_runtime_rig.config import RigConfig
-from live_runtime_rig.contracts import CleanupEntry
+from live_runtime_rig.contracts import BackupProof, CleanupEntry
 from live_runtime_rig.sqlite_safety import (
     count_rows,
     integrity_check,
     read_only_connection,
     verified_sqlite_backup,
 )
-
-from .database import initialize_database
-
 
 ALLOWED_TABLES = frozenset(
     {
@@ -32,14 +30,17 @@ ALLOWED_TABLES = frozenset(
 class WorkOrderDatabaseAdapter:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
-        initialize_database(database_path)
+
+
+    def close(self) -> None:
+        """This adapter opens only method-scoped connections."""
 
     def verify_connection(self) -> Mapping[str, Any]:
         with read_only_connection(self.database_path) as connection:
             value = connection.execute("SELECT 1").fetchone()[0]
         return {"connected": value == 1}
 
-    def backup(self, destination: Path) -> Mapping[str, Any]:
+    def backup(self, destination: Path) -> BackupProof:
         return verified_sqlite_backup(self.database_path, destination)
 
     def integrity_check(self, path: Path | None = None) -> Mapping[str, Any]:

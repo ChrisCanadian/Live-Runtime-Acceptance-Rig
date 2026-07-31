@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+
+IMPORTANT_KEYS = (
+    "RIG_RUNTIME_ADAPTER",
+    "RIG_DATABASE_ADAPTER",
+    "RIG_CASES",
+    "RIG_DATABASE_PATH",
+    "RIG_EVIDENCE_DIR",
+    "RIG_APPLICATION_LABEL",
+    "RIG_PUBLIC_SAFE",
+    "RIG_INTENTIONAL_FAILURE",
+    "RIG_NETWORK_REQUIRED",
+)
 
 
 def _parse_bool(value: str, *, key: str) -> bool:
@@ -60,6 +72,10 @@ class RigConfig:
     application_label: str = "application"
     public_safe: bool = False
     intentional_failure: bool = False
+    network_required: bool = False
+    provenance: Mapping[str, str] = field(default_factory=dict)
+    environment_overrides_enabled: bool = False
+    ignored_environment_overrides: tuple[str, ...] = ()
 
     @classmethod
     def load(
@@ -67,13 +83,38 @@ class RigConfig:
         path: Path,
         *,
         environment: Mapping[str, str] | None = None,
-    ) -> "RigConfig":
+        allow_environment_overrides: bool = False,
+        cli_overrides: Mapping[str, str] | None = None,
+    ) -> RigConfig:
         resolved = path.resolve()
         values = _parse_env_file(resolved)
+        provenance = {key: "config file" for key in values}
         environment = os.environ if environment is None else environment
-        for key, value in environment.items():
-            if key.startswith("RIG_"):
+
+        file_opt_in = _parse_bool(
+            values.get("RIG_ALLOW_ENV_OVERRIDES", "false"),
+            key="RIG_ALLOW_ENV_OVERRIDES",
+        )
+        overrides_enabled = allow_environment_overrides or file_opt_in
+        ambient = {
+            key: value
+            for key, value in environment.items()
+            if key.startswith("RIG_") and key in IMPORTANT_KEYS
+        }
+        ignored: tuple[str, ...] = ()
+        if overrides_enabled:
+            for key, value in ambient.items():
                 values[key] = value
+                provenance[key] = "environment override"
+        else:
+            ignored = tuple(sorted(ambient))
+
+        for key, value in (cli_overrides or {}).items():
+            if key not in IMPORTANT_KEYS:
+                raise ValueError(f"Unsupported CLI configuration override: {key}")
+            values[key] = value
+            provenance[key] = "CLI"
+
         required = (
             "RIG_RUNTIME_ADAPTER",
             "RIG_DATABASE_ADAPTER",
@@ -86,6 +127,18 @@ class RigConfig:
             raise ValueError(
                 "Missing required configuration keys: " + ", ".join(missing)
             )
+
+        defaults = {
+            "RIG_APPLICATION_LABEL": "application",
+            "RIG_PUBLIC_SAFE": "false",
+            "RIG_INTENTIONAL_FAILURE": "false",
+            "RIG_NETWORK_REQUIRED": "false",
+        }
+        for key, value in defaults.items():
+            if key not in values:
+                values[key] = value
+                provenance[key] = "default"
+
         base = resolved.parent
         return cls(
             config_file=resolved,
@@ -94,18 +147,26 @@ class RigConfig:
             cases=values["RIG_CASES"],
             database_path=_resolve_path(base, values["RIG_DATABASE_PATH"]),
             evidence_dir=_resolve_path(base, values["RIG_EVIDENCE_DIR"]),
-            application_label=values.get("RIG_APPLICATION_LABEL", "application"),
+            application_label=values["RIG_APPLICATION_LABEL"],
             public_safe=_parse_bool(
-                values.get("RIG_PUBLIC_SAFE", "false"), key="RIG_PUBLIC_SAFE"
+                values["RIG_PUBLIC_SAFE"], key="RIG_PUBLIC_SAFE"
             ),
             intentional_failure=_parse_bool(
-                values.get("RIG_INTENTIONAL_FAILURE", "false"),
+                values["RIG_INTENTIONAL_FAILURE"],
                 key="RIG_INTENTIONAL_FAILURE",
             ),
+            network_required=_parse_bool(
+                values["RIG_NETWORK_REQUIRED"],
+                key="RIG_NETWORK_REQUIRED",
+            ),
+            provenance={key: provenance[key] for key in IMPORTANT_KEYS},
+            environment_overrides_enabled=overrides_enabled,
+            ignored_environment_overrides=ignored,
         )
 
     def case_settings(self) -> dict[str, object]:
         return {
             "application_label": self.application_label,
             "intentional_failure": self.intentional_failure,
+            "network_required": self.network_required,
         }

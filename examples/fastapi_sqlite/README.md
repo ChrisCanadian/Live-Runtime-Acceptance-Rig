@@ -3,22 +3,41 @@
 This example is a small local work-order service. It has no external network
 dependency and uses FastAPI's in-process test client.
 
+The reusable framework core does not install FastAPI. Install the example
+dependencies before running this bundled adapter:
+
+~~~bash
+python -m pip install -e ".[example]"
+~~~
+
+For repository development, .[dev] installs the same example dependencies
+plus pytest.
+
+Seed the fictional toy database explicitly before the first campaign:
+
+~~~bash
+python -m live_runtime_rig_examples.fastapi_sqlite.seed --database var/work_orders.db
+~~~
+
 Run the passing campaign from the repository root:
 
-```bash
+~~~bash
 python -m live_runtime_rig --config examples/fastapi_sqlite/.env.example --public-safe
-```
+~~~
 
 **EXPECTED DEMONSTRATION FAILURE — EXITS WITH STATUS 1 BY DESIGN**
 
-```bash
+~~~bash
 python -m live_runtime_rig --config examples/fastapi_sqlite/intentional-failure.env --public-safe
-```
+~~~
 
-The database adapter creates the local toy fixture if it does not exist. It then
-uses SQLite's native backup API and verifies the backup before the application
-cases perform writes.
+The database and runtime adapters do not initialize or migrate the durable
+store. Explicit setup ensures the campaign's verified pre-write backup captures
+the true starting state. The SQLite adapter uses the native backup API and
+returns a structured file proof that the runner independently verifies against
+the exact destination bytes and an integrity check.
 
 The lifecycle case creates one marked work order, reads it back, updates it,
-archives it, verifies event and audit rows, and records each created resource in
-the cleanup manifest. No cleanup runs automatically.
+archives it, verifies event and audit rows, and registers each discovered
+resource in the cleanup manifest immediately after its successful mutation.
+No cleanup runs automatically.

@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .redaction import Redactor
 
 
 class Tracer:
+    RESERVED_FIELDS = frozenset(
+        {"timestamp", "sequence", "run_id", "event", "suite", "case"}
+    )
+
     def __init__(
         self,
         output: Path,
@@ -28,15 +35,25 @@ class Tracer:
         self.redactor = redactor or Redactor(environment_values=())
         self._sequence = 0
         self._lock = threading.Lock()
+        self._protected_hash_key = secrets.token_bytes(32)
 
-    def emit(
+    def emit(self, event: str, **data: Any) -> dict[str, Any]:
+        """Emit case data without allowing it to set runtime-owned metadata."""
+
+        return self._emit(event, suite=None, case=None, data=data)
+
+    def _emit(
         self,
         event: str,
         *,
-        suite: str | None = None,
-        case: str | None = None,
-        **data: Any,
+        suite: str | None,
+        case: str | None,
+        data: dict[str, Any],
     ) -> dict[str, Any]:
+        collisions = self.RESERVED_FIELDS.intersection(data)
+        if collisions:
+            names = ", ".join(sorted(collisions))
+            raise ValueError(f"trace data contains reserved fields: {names}")
         with self._lock:
             self._sequence += 1
             record = {
@@ -51,7 +68,7 @@ class Tracer:
                 record["case"] = case
             record.update(self.redactor.redact_value(data))
             with self.output.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return record
 
     @contextmanager
@@ -64,40 +81,52 @@ class Tracer:
         **data: Any,
     ) -> Iterator[None]:
         started = time.perf_counter()
-        self.emit(
+        self._emit(
             event,
             suite=suite,
             case=case,
-            phase="started",
-            **data,
+            data={"phase": "started", **data},
         )
         try:
             yield
         except Exception as exc:
-            self.emit(
+            self._emit(
                 event,
                 suite=suite,
                 case=case,
-                phase="completed",
-                success=False,
-                elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
-                exception_type=type(exc).__name__,
+                data={
+                    "phase": "completed",
+                    "success": False,
+                    "elapsed_ms": round(
+                        (time.perf_counter() - started) * 1000,
+                        3,
+                    ),
+                    "exception_type": type(exc).__name__,
+                },
             )
             raise
         else:
-            self.emit(
+            self._emit(
                 event,
                 suite=suite,
                 case=case,
-                phase="completed",
-                success=True,
-                elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+                data={
+                    "phase": "completed",
+                    "success": True,
+                    "elapsed_ms": round(
+                        (time.perf_counter() - started) * 1000,
+                        3,
+                    ),
+                },
             )
 
-    @staticmethod
-    def protected_text_metadata(text: str) -> dict[str, Any]:
+    def protected_text_metadata(self, text: str) -> dict[str, Any]:
         encoded = text.encode("utf-8")
         return {
             "length": len(text),
-            "sha256": hashlib.sha256(encoded).hexdigest(),
+            "hmac_sha256": hmac.new(
+                self._protected_hash_key,
+                encoded,
+                hashlib.sha256,
+            ).hexdigest(),
         }
