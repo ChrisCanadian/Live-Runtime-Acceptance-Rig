@@ -7,16 +7,23 @@ import platform
 import secrets
 import sys
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 from .assertions import AssertionLedger, CheckStatus
+from .backup import BackupProofError, verify_backup_proof
 from .cleanup import CleanupManifest
 from .config import RigConfig
 from .console import Console
-from .contracts import AcceptanceCase, CaseContext, CaseResult, CheckSpec
+from .contracts import (
+    AcceptanceCase,
+    BackupProof,
+    CaseContext,
+    CaseResult,
+    CheckSpec,
+)
 from .evidence import EvidenceBundle
 from .redaction import Redactor
 from .tracer import Tracer
@@ -89,6 +96,8 @@ class RigRunner:
         self.framework_status = "COMPLETED"
         self.started_at = datetime.now(timezone.utc)
         self._started_clock = time.perf_counter()
+        self._executed_acceptance_checks = 0
+        self._result_code = "PASS"
 
     def _record(
         self,
@@ -135,7 +144,28 @@ class RigRunner:
             heuristic=specification.heuristic,
         )
 
+    def _register_cleanup_entries(self, entries: Iterable[Any]) -> None:
+        self.cleanup.add_many(entries)
+        self.evidence.write_json("cleanup_manifest.json", self.cleanup.as_dict())
+
     def _environment(self) -> dict[str, Any]:
+        provenance = {
+            key: value
+            for key, value in self.config.provenance.items()
+        } or {
+            key: "programmatic"
+            for key in (
+                "RIG_RUNTIME_ADAPTER",
+                "RIG_DATABASE_ADAPTER",
+                "RIG_CASES",
+                "RIG_DATABASE_PATH",
+                "RIG_EVIDENCE_DIR",
+                "RIG_APPLICATION_LABEL",
+                "RIG_PUBLIC_SAFE",
+                "RIG_INTENTIONAL_FAILURE",
+                "RIG_NETWORK_REQUIRED",
+            )
+        }
         return {
             "run_id": self.run_id,
             "generated_at": self.started_at.isoformat(),
@@ -149,7 +179,23 @@ class RigRunner:
                 if self.public_safe
                 else str(self.config.database_path)
             ),
-            "network_required": False,
+            "network_required": self.config.network_required,
+            "configuration_provenance": provenance,
+            "runner_option_provenance": {
+                "public_safe": (
+                    "CLI" if self.options.public_safe else provenance["RIG_PUBLIC_SAFE"]
+                ),
+                "case": "CLI" if self.options.case else "default",
+                "cleanup_manifest_only": (
+                    "CLI" if self.options.cleanup_manifest_only else "default"
+                ),
+            },
+            "environment_overrides_enabled": (
+                self.config.environment_overrides_enabled
+            ),
+            "ignored_environment_overrides": list(
+                self.config.ignored_environment_overrides
+            ),
         }
 
     def _resolve_components(self) -> tuple[Callable[..., Any], Callable[..., Any], Callable[..., Any]]:
@@ -204,7 +250,28 @@ class RigRunner:
                     expected=self.options.case,
                     observed="no match",
                 )
+                self._result_code = "CASE_SELECTION_NOT_FOUND"
                 return
+
+        if not cases:
+            self._result_code = "NO_EXECUTED_ACCEPTANCE_CHECKS"
+            return
+
+        evidence_names: dict[str, str] = {}
+        for case in cases:
+            safe_name = self.evidence.safe_case_name(case.name).casefold()
+            previous = evidence_names.get(safe_name)
+            if previous is not None:
+                self._record(
+                    suite="CASE SELECTION",
+                    name="Case evidence names are unique",
+                    status=CheckStatus.FAIL,
+                    expected="unique sanitized case names",
+                    observed={"first": previous, "second": case.name},
+                )
+                self._result_code = "DUPLICATE_CASE_EVIDENCE_NAME"
+                return
+            evidence_names[safe_name] = case.name
 
         total_suites = 2 + len({case.suite for case in cases})
         self.console.suite(0, total_suites, "preflight")
@@ -246,16 +313,34 @@ class RigRunner:
             backup_destination = (
                 self.evidence.root / "backups" / f"{self.run_id}.backup.sqlite"
             )
-            backup = dict(self.database.backup(backup_destination))
-            backup_ok = (
-                backup.get("verified") is True
-                and backup.get("integrity") == "ok"
-                and isinstance(backup.get("size_bytes"), int)
-                and int(backup["size_bytes"]) > 0
-                and isinstance(backup.get("sha256"), str)
-                and len(str(backup["sha256"])) == 64
+            proof = self.database.backup(backup_destination)
+            verification = None
+            backup_code = "VERIFIED"
+            try:
+                verification = verify_backup_proof(
+                    proof,
+                    expected_destination=backup_destination,
+                    database=self.database,
+                )
+                backup_ok = True
+            except BackupProofError as exc:
+                backup_ok = False
+                backup_code = exc.code
+            proof_payload = (
+                proof.as_dict()
+                if isinstance(proof, BackupProof)
+                else {"reported_type": type(proof).__name__}
             )
-            backup_evidence = self.evidence.write_json("backups/backup.json", backup)
+            backup_evidence = self.evidence.write_json(
+                "backups/backup.json",
+                {
+                    "proof": proof_payload,
+                    "verification": (
+                        verification.as_dict() if verification is not None else None
+                    ),
+                    "result_code": backup_code,
+                },
+            )
             self._record(
                 suite="PREFLIGHT",
                 name="Database backup created and verified before writes",
@@ -263,12 +348,11 @@ class RigRunner:
                 expected={
                     "verified": True,
                     "integrity": "ok",
-                    "sha256_length": 64,
+                    "file_matches_reported_size_and_sha256": True,
                 },
                 observed={
-                    "verified": backup.get("verified"),
-                    "integrity": backup.get("integrity"),
-                    "sha256_length": len(str(backup.get("sha256", ""))),
+                    "verified": backup_ok,
+                    "result_code": backup_code,
                 },
                 evidence_path=backup_evidence,
             )
@@ -351,6 +435,7 @@ class RigRunner:
             evidence=self.evidence,
             tracer=self.tracer,
             state=state,
+            _cleanup_registrar=self._register_cleanup_entries,
         )
         ordered_suites: list[str] = []
         for case in cases:
@@ -361,10 +446,10 @@ class RigRunner:
             self.console.suite(suite_index, total_suites, suite)
             suite_index += 1
             for case in (item for item in cases if item.suite == suite):
-                with self.tracer.span(
-                    "case.execution", suite=case.suite, case=case.name
-                ):
-                    try:
+                try:
+                    with self.tracer.span(
+                        "case.execution", suite=case.suite, case=case.name
+                    ):
                         result = case.run(self.runtime, self.database, context)
                         if not isinstance(result, CaseResult):
                             raise TypeError("case must return CaseResult")
@@ -383,21 +468,22 @@ class RigRunner:
                                 specification,
                                 default_evidence=case_path,
                             )
-                        for entry in result.cleanup_entries:
-                            self.cleanup.add(entry)
+                            if specification.status is not CheckStatus.SKIP:
+                                self._executed_acceptance_checks += 1
+                        self._register_cleanup_entries(result.cleanup_entries)
                         state.update(result.state_updates)
-                    except Exception as exc:
-                        error_path = self.evidence.write_error(
-                            f"case_{case.name}", exc
-                        )
-                        self._record(
-                            suite=case.suite,
-                            name=f"{case.name} completed without framework exception",
-                            status=CheckStatus.FAIL,
-                            expected="CaseResult",
-                            observed=type(exc).__name__,
-                            evidence_path=error_path,
-                        )
+                except Exception as exc:
+                    error_path = self.evidence.write_error(
+                        f"case_{case.name}", exc
+                    )
+                    self._record(
+                        suite=case.suite,
+                        name=f"{case.name} completed without framework exception",
+                        status=CheckStatus.FAIL,
+                        expected="CaseResult",
+                        observed=type(exc).__name__,
+                        evidence_path=error_path,
+                    )
 
         self.console.suite(total_suites - 1, total_suites, "protected state")
         try:
@@ -431,16 +517,32 @@ class RigRunner:
                 evidence_path=error_path,
             )
 
+    def _acceptance_result(self) -> tuple[str, str]:
+        if self.options.cleanup_manifest_only and not self.ledger.failed:
+            return "PASS", "PASS"
+        if self.ledger.failed:
+            code = (
+                self._result_code
+                if self._result_code != "PASS"
+                else "ACCEPTANCE_CHECK_FAILED"
+            )
+            return "FAIL", code
+        if self._executed_acceptance_checks == 0:
+            return "INCONCLUSIVE", "NO_EXECUTED_ACCEPTANCE_CHECKS"
+        return "PASS", "PASS"
+
     def _finalize(self) -> int:
         self.evidence.write_json("cleanup_manifest.json", self.cleanup.as_dict())
         self.evidence.ensure_required_files()
         summary = self.ledger.summary()
-        acceptance_status = "FAIL" if self.ledger.failed else "PASS"
+        acceptance_status, result_code = self._acceptance_result()
         completed_at = datetime.now(timezone.utc)
         run_payload = {
             "run_id": self.run_id,
             "framework_status": self.framework_status,
             "acceptance_status": acceptance_status,
+            "result_code": result_code,
+            "executed_acceptance_checks": self._executed_acceptance_checks,
             "started_at": self.started_at.isoformat(),
             "completed_at": completed_at.isoformat(),
             "elapsed_seconds": round(time.perf_counter() - self._started_clock, 3),
@@ -469,51 +571,115 @@ class RigRunner:
             else 1
         )
 
+    def _record_framework_exception(
+        self,
+        *,
+        label: str,
+        name: str,
+        exc: BaseException,
+    ) -> None:
+        self.framework_status = "ERROR"
+        try:
+            error_path = self.evidence.write_error(label, exc)
+        except Exception:
+            error_path = None
+        self._record(
+            suite="FRAMEWORK",
+            name=name,
+            status=CheckStatus.FAIL,
+            expected="completed",
+            observed=type(exc).__name__,
+            evidence_path=error_path,
+        )
+
+    def _close_adapter(self, label: str, adapter: Any) -> None:
+        if adapter is None:
+            return
+        close = getattr(adapter, "close", None)
+        if close is None:
+            return
+        try:
+            close()
+        except Exception as exc:
+            self._record_framework_exception(
+                label=f"{label}_close",
+                name=f"{label.title()} adapter closed",
+                exc=exc,
+            )
+
+    def _finalization_failed(self, exc: BaseException) -> int:
+        self.framework_status = "ERROR"
+        try:
+            self.evidence.write_error("finalization", exc)
+        except Exception:
+            pass
+        summary = self.ledger.summary()
+        try:
+            self.evidence.write_json(
+                "run.json",
+                {
+                    "run_id": self.run_id,
+                    "framework_status": "ERROR",
+                    "acceptance_status": "FAIL",
+                    "result_code": "FINALIZATION_ERROR",
+                    "executed_acceptance_checks": self._executed_acceptance_checks,
+                    "summary": summary,
+                    "checks": [check.as_dict() for check in self.ledger.checks],
+                    "cleanup_manifest": "cleanup_manifest.json",
+                },
+            )
+        except Exception:
+            pass
+        try:
+            self.console.final(
+                framework_status="ERROR",
+                acceptance_status="FAIL",
+                summary=summary,
+                evidence_path=self.evidence.display_path,
+            )
+        except Exception:
+            pass
+        return 1
+
     def run(self) -> int:
         self.console.start(self.run_id, self.public_safe)
-        self.evidence.write_json("environment.json", self._environment())
-        self.tracer.emit(
-            "campaign.execution",
-            phase="started",
-            public_safe=self.public_safe,
-        )
         try:
+            self.evidence.write_json("environment.json", self._environment())
+            self.tracer.emit(
+                "campaign.execution",
+                phase="started",
+                public_safe=self.public_safe,
+            )
             if self.options.cleanup_manifest_only:
                 self._run_manifest_only()
             else:
                 self._run_campaign()
         except Exception as exc:
-            self.framework_status = "ERROR"
-            error_path = self.evidence.write_error("framework", exc)
-            self._record(
-                suite="FRAMEWORK",
+            self._record_framework_exception(
+                label="framework",
                 name="Framework execution completed",
-                status=CheckStatus.FAIL,
-                expected="completed",
-                observed=type(exc).__name__,
-                evidence_path=error_path,
+                exc=exc,
             )
         finally:
-            if self.runtime is not None:
-                try:
-                    self.runtime.close()
-                except Exception as exc:
-                    error_path = self.evidence.write_error("runtime_close", exc)
-                    self._record(
-                        suite="FRAMEWORK",
-                        name="Runtime adapter closed",
-                        status=CheckStatus.FAIL,
-                        expected="closed",
-                        observed=type(exc).__name__,
-                        evidence_path=error_path,
-                    )
-            self.tracer.emit(
-                "campaign.execution",
-                phase="completed",
-                framework_status=self.framework_status,
-                acceptance_failed=self.ledger.failed,
-                elapsed_ms=round(
-                    (time.perf_counter() - self._started_clock) * 1000, 3
-                ),
-            )
-        return self._finalize()
+            self._close_adapter("runtime", self.runtime)
+            self._close_adapter("database", self.database)
+            try:
+                self.tracer.emit(
+                    "campaign.execution",
+                    phase="completed",
+                    framework_status=self.framework_status,
+                    acceptance_failed=self.ledger.failed,
+                    elapsed_ms=round(
+                        (time.perf_counter() - self._started_clock) * 1000, 3
+                    ),
+                )
+            except Exception as exc:
+                self._record_framework_exception(
+                    label="trace_finalization",
+                    name="Campaign trace finalized",
+                    exc=exc,
+                )
+        try:
+            return self._finalize()
+        except Exception as exc:
+            return self._finalization_failed(exc)

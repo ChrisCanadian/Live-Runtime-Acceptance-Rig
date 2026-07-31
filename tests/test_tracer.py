@@ -37,11 +37,12 @@ def test_tracer_records_safe_exception_type(tmp_path) -> None:
     assert "protected message" not in json.dumps(record)
 
 
-def test_protected_text_helper_hashes_without_returning_text() -> None:
+def test_protected_text_helper_hashes_without_returning_text(tmp_path) -> None:
     protected = "private sample"
-    metadata = Tracer.protected_text_metadata(protected)
+    tracer = Tracer(tmp_path / "trace.ndjson", "ACCEPTANCE_TEST")
+    metadata = tracer.protected_text_metadata(protected)
     assert metadata["length"] == len(protected)
-    assert len(metadata["sha256"]) == 64
+    assert len(metadata["hmac_sha256"]) == 64
     assert protected not in str(metadata)
 
 

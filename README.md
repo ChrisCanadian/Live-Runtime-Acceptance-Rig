@@ -76,6 +76,7 @@ installs the example dependencies plus pytest.
 
 ```bash
 python -m pip install -e ".[dev]"
+python -m live_runtime_rig_examples.fastapi_sqlite.seed --database var/work_orders.db
 python -m live_runtime_rig --config examples/fastapi_sqlite/.env.example --public-safe
 ```
 
@@ -94,6 +95,10 @@ references, and implement the contracts described below.
 
 The included example is an unrelated FastAPI and SQLite work-order service. It
 runs in-process and does not use the public network.
+
+Seed the toy database explicitly before the first campaign:
+
+    python -m live_runtime_rig_examples.fastapi_sqlite.seed --database var/work_orders.db
 
 Passing campaign:
 
@@ -117,6 +122,7 @@ python -m live_runtime_rig --config PATH
     [--quiet | --verbose]
     [--case NAME_OR_SUITE]
     [--public-safe]
+    [--allow-env-overrides]
     [--cleanup-manifest-only]
 ```
 
@@ -124,6 +130,7 @@ python -m live_runtime_rig --config PATH
 - `--verbose` prints expected, observed, and evidence detail for each check.
 - `--case` selects one exact case name or suite.
 - `--public-safe` redacts sensitive values and local paths in textual evidence.
+- `--allow-env-overrides` explicitly permits ambient `RIG_*` values to override the configuration file and records their provenance.
 - `--cleanup-manifest-only` writes an empty current-run manifest and complete
   evidence skeleton without starting either adapter.
 
@@ -150,13 +157,16 @@ Implement `DatabaseAdapter` from `live_runtime_rig.contracts`.
 
 - Verify connectivity without writes.
 - Use engine-native consistent backup facilities.
-- Verify backup integrity and record a digest before starting write cases.
+- Return a structured `BackupProof`; file proofs are independently checked against the exact destination, size, hexadecimal SHA-256, and targeted integrity result.
+- Provide an explicit `BackupVerifier` for remote or non-file snapshots.
 - Use read-only connections for snapshots where the engine supports them.
 - Strictly allowlist any interpolated table identifiers.
 - Parameterize all record values.
 - Verify current-run records through durable readback.
 - Snapshot protected state before and after.
 - Emit cleanup entries containing exact identifiers and the run marker.
+- Implement `close()` for adapter lifecycle cleanup.
+- Do not initialize, migrate, or seed durable state during adapter construction.
 
 The toy adapter demonstrates SQLite's native backup API, read-only snapshots,
 integrity verification, SHA-256, strict table allowlisting, and parameterized
@@ -171,6 +181,8 @@ A case has `name`, `suite`, and `run(runtime, database, context)`. It returns a
 - public-safe case evidence;
 - cleanup entries for resources it created;
 - optional state updates for later cases.
+
+After each successful mutation, call `context.register_cleanup(entry)` immediately, or use `register_cleanups(entries)` for an atomic batch. `CaseResult.cleanup_entries` remains compatible, but it cannot protect a mutation if the case raises before returning.
 
 Every check chooses `CheckStatus.PASS`, `CheckStatus.FAIL`, or
 `CheckStatus.SKIP`. The ledger never converts a generic truthy object into a
@@ -227,8 +239,7 @@ evidence/<run-id>/
 ```
 
 The structure is created before preflight work so an early failure still leaves
-a usable bundle. `run.json` separates `framework_status` from
-`acceptance_status`.
+a usable bundle. `run.json` separates `framework_status` from `acceptance_status` and includes a machine-readable `result_code`. Empty and all-skipped campaigns are `INCONCLUSIVE`. All evidence destinations and programmatic run IDs are constrained beneath the configured evidence root.
 
 ## Tracing
 
@@ -243,13 +254,11 @@ The NDJSON tracer records:
 - safe exception type.
 
 Protected text is not logged by default. Use
-`Tracer.protected_text_metadata(text)` to record only character length and a
-SHA-256 digest.
+`context.tracer.protected_text_metadata(text)` to record only character length and a per-run keyed HMAC-SHA256 digest. Runtime-owned trace fields are reserved and collision attempts are rejected.
 
 ## Cleanup manifests
 
-The framework records only resources declared by the current case and rejects a
-cleanup entry whose marker differs from the current run marker.
+The framework records only resources declared by the current case and rejects a cleanup entry whose marker differs from the current run marker or whose identifier is empty. Registration is persisted immediately, duplicate entries are suppressed, and an invalid batch leaves the manifest unchanged.
 
 Each entry contains the resource type, identifier, table or path, marker, notes,
 callback key, and a narrow cleanup instruction. No cleanup executes
@@ -265,6 +274,8 @@ secret assignments, bearer tokens, absolute local paths, and selected sensitive
 environment values. It also omits exception messages and tracebacks from public
 error evidence.
 
+Structured evidence accepts only JSON-compatible values, preventing custom objects from bypassing redaction through fallback string conversion.
+
 It does not make arbitrary evidence safe by itself. Before publication, manually
 review:
 
@@ -279,12 +290,11 @@ Do not publish a real production database backup.
 
 ## Exit codes
 
-- `0`: framework status is `COMPLETED` and no acceptance check failed.
-- `1`: one or more acceptance checks failed, or the framework reported an
-  internal execution error.
+- `0`: framework status is `COMPLETED`, the campaign executed at least one non-skipped acceptance check, and all executed checks passed. Cleanup-manifest-only mode is exempt.
+- `1`: acceptance failed, the framework reported an execution error, or the result is `INCONCLUSIVE` because no acceptance check executed.
 - `2`: command-line parsing failed.
 
-Skipped checks do not cause a nonzero exit.
+Individual skipped checks are allowed, but a campaign with only skipped acceptance checks is inconclusive and exits 1.
 
 ## Example terminal output
 
@@ -335,6 +345,7 @@ external systems, or prove that restoration works. Before live use:
 ## Known limitations
 
 - The framework cannot know whether an adapter points at the intended system.
+- Remote backup assurance depends on the explicitly supplied verifier contract.
 - It cannot prove a backup is restorable in the target deployment.
 - Process-local tracing cannot observe work performed in another process.
 - Public-safe redaction cannot identify every project-specific secret.

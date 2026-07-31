@@ -4,21 +4,26 @@ import io
 import json
 from pathlib import Path
 
+from live_runtime_rig.config import RigConfig
+from live_runtime_rig.console import Console
+from live_runtime_rig.evidence import EvidenceBundle
+from live_runtime_rig.runner import RigRunner, RunnerOptions
 from live_runtime_rig_examples.fastapi_sqlite.cases import (
     IntentionalFailureCase,
     register_cases,
 )
-from live_runtime_rig_examples.fastapi_sqlite.database_adapter import create_database_adapter
-from live_runtime_rig_examples.fastapi_sqlite.runtime_adapter import create_runtime_adapter
-from live_runtime_rig.config import RigConfig
-from live_runtime_rig.console import Console
-from live_runtime_rig.evidence import EvidenceBundle
-from live_runtime_rig.redaction import Redactor
-from live_runtime_rig.runner import RigRunner, RunnerOptions
+from live_runtime_rig_examples.fastapi_sqlite.database import initialize_database
+from live_runtime_rig_examples.fastapi_sqlite.database_adapter import (
+    create_database_adapter,
+)
+from live_runtime_rig_examples.fastapi_sqlite.runtime_adapter import (
+    create_runtime_adapter,
+)
 
 
 def _config(tmp_path: Path, *, intentional_failure: bool = False) -> RigConfig:
     config_file = tmp_path / ".env"
+    initialize_database(tmp_path / "work_orders.sqlite")
     config_file.write_text("# test config\n", encoding="utf-8")
     return RigConfig(
         config_file=config_file,
@@ -102,7 +107,7 @@ def test_early_database_failure_still_writes_complete_evidence(tmp_path) -> None
         run_id="ACCEPTANCE_EARLY_FAILURE_TEST",
         runtime_factory=create_runtime_adapter,
         database_factory=broken_database_factory,
-        case_loader=lambda _: [],
+        case_loader=lambda _: [IntentionalFailureCase()],
         console=Console(quiet=True, stream=io.StringIO()),
     )
     code = runner.run()

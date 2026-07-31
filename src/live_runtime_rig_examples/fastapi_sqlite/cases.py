@@ -35,8 +35,8 @@ class WorkOrderLifecycleCase:
         updated_title = "Inspect and label example circulation pump"
         context.tracer.emit(
             "case.input.metadata",
-            suite=self.suite,
-            case=self.name,
+
+
             title=context.tracer.protected_text_metadata(initial_title),
         )
 
@@ -53,6 +53,39 @@ class WorkOrderLifecycleCase:
             else None
         )
 
+        def current_cleanup_entries():
+            current = database.resources_for_work_order(work_order_id, marker)
+            entries = [
+                database.cleanup_manifest_entry(
+                    "work_order",
+                    work_order_id,
+                    marker,
+                    notes="Work order created by this acceptance run.",
+                )
+            ]
+            entries.extend(
+                database.cleanup_manifest_entry(
+                    "event",
+                    str(event["id"]),
+                    marker,
+                    notes=f"Lifecycle event for work order {work_order_id}.",
+                )
+                for event in current["events"]
+            )
+            entries.extend(
+                database.cleanup_manifest_entry(
+                    "audit_receipt",
+                    str(receipt["id"]),
+                    marker,
+                    notes=f"Audit receipt for work order {work_order_id}.",
+                )
+                for receipt in current["audit_receipts"]
+            )
+            return current, entries
+
+        _, create_cleanup_entries = current_cleanup_entries()
+        context.register_cleanups(create_cleanup_entries)
+
         read_response = runtime.request(
             "GET", f"/work-orders/{work_order_id}"
         )
@@ -68,6 +101,8 @@ class WorkOrderLifecycleCase:
         durable_updated = database.verify_created_record(
             "work_order", work_order_id
         )
+        _, update_cleanup_entries = current_cleanup_entries()
+        context.register_cleanups(update_cleanup_entries)
         archive_response = runtime.request(
             "POST",
             f"/work-orders/{work_order_id}/archive",
@@ -76,7 +111,8 @@ class WorkOrderLifecycleCase:
         durable_archived = database.verify_created_record(
             "work_order", work_order_id
         )
-        resources = database.resources_for_work_order(work_order_id, marker)
+        resources, cleanup_entries = current_cleanup_entries()
+        context.register_cleanups(cleanup_entries)
         audit_actions = sorted(
             receipt["action"] for receipt in resources["audit_receipts"]
         )
@@ -164,32 +200,7 @@ class WorkOrderLifecycleCase:
                 event_types,
             ),
         ]
-        cleanup_entries = [
-            database.cleanup_manifest_entry(
-                "work_order",
-                work_order_id,
-                marker,
-                notes="Archived work order created by this acceptance run.",
-            )
-        ]
-        cleanup_entries.extend(
-            database.cleanup_manifest_entry(
-                "event",
-                str(event["id"]),
-                marker,
-                notes=f"Lifecycle event for work order {work_order_id}.",
-            )
-            for event in resources["events"]
-        )
-        cleanup_entries.extend(
-            database.cleanup_manifest_entry(
-                "audit_receipt",
-                str(receipt["id"]),
-                marker,
-                notes=f"Audit receipt for work order {work_order_id}.",
-            )
-            for receipt in resources["audit_receipts"]
-        )
+
         return CaseResult(
             checks=checks,
             evidence={

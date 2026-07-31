@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import quote
+
+from .contracts import BackupProof
 
 
 class BackupVerificationError(RuntimeError):
@@ -42,7 +44,7 @@ def integrity_check(path: Path) -> str:
     return result
 
 
-def verified_sqlite_backup(source: Path, destination: Path) -> dict[str, object]:
+def verified_sqlite_backup(source: Path, destination: Path) -> BackupProof:
     if not source.is_file() or source.stat().st_size == 0:
         raise BackupVerificationError("Source SQLite database is missing or empty")
     if destination.exists():
@@ -56,14 +58,15 @@ def verified_sqlite_backup(source: Path, destination: Path) -> dict[str, object]
         destination_connection.close()
         source_connection.close()
     verified = integrity_check(destination)
-    return {
-        "verified": verified == "ok",
-        "integrity": verified,
-        "path": destination.name,
-        "size_bytes": destination.stat().st_size,
-        "sha256": file_sha256(destination),
-        "method": "sqlite3.Connection.backup",
-    }
+    return BackupProof(
+        evidence_type="file",
+        target=str(destination.resolve()),
+        verified=verified == "ok",
+        integrity=verified,
+        size_bytes=destination.stat().st_size,
+        sha256=file_sha256(destination),
+        method="sqlite3.Connection.backup",
+    )
 
 
 def allowlisted_identifier(identifier: str, allowed: Iterable[str]) -> str:
