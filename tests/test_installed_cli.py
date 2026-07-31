@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import venv
+from importlib.util import find_spec
 from pathlib import Path
 
 from live_runtime_rig_examples.fastapi_sqlite.database import initialize_database
@@ -32,7 +33,10 @@ def _assert_passing_campaign(result: subprocess.CompletedProcess[str]) -> None:
     assert "RESULT: PASS" in result.stdout
 
 
-def test_installed_entry_points_work_outside_repository(tmp_path) -> None:
+def test_installed_entry_points_work_outside_repository_with_dev_dependencies(
+    tmp_path,
+) -> None:
+    assert find_spec("fastapi") is not None, "install .[dev] or .[example] before this test"
     virtual_environment = tmp_path / "installed-environment"
     outside_directory = tmp_path / "outside-repository"
     outside_directory.mkdir()
@@ -62,6 +66,9 @@ def test_installed_entry_points_work_outside_repository(tmp_path) -> None:
         + "\n",
         encoding="utf-8",
     )
+    # The outer test environment is installed with .[dev]. Expose those example
+    # dependencies while installing the package itself without dependency resolution;
+    # core-only installations are not expected to run the FastAPI example adapters.
     venv.EnvBuilder(
         with_pip=True,
         system_site_packages=True,

@@ -3,6 +3,16 @@
 This example is a small local work-order service. It has no external network
 dependency and uses FastAPI's in-process test client.
 
+The reusable framework core does not install FastAPI. Install the example
+dependencies before running this bundled adapter:
+
+~~~bash
+python -m pip install -e ".[example]"
+~~~
+
+For repository development, .[dev] installs the same example dependencies
+plus pytest.
+
 Seed the fictional toy database explicitly before the first campaign:
 
 ~~~bash
