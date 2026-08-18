@@ -375,6 +375,10 @@ data.
 
 Security guidance is in [SECURITY.md](SECURITY.md).
 
+## Attribution and provenance
+
+See [`ATTRIBUTION.md`](ATTRIBUTION.md) for authorship, the established-technique and Nexus verification lineage, external-component boundaries, and permission scope.
+
 ## License
 
 Licensed under the Apache License 2.0. See [LICENSE](LICENSE).
