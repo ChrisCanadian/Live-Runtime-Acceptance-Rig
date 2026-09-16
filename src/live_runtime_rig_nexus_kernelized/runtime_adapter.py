@@ -78,6 +78,12 @@ class KernelizedNexusRuntimeAdapter:
         self.production_checkout = Path(os.environ["NEXUS_RIG_PRODUCTION_CHECKOUT"]).resolve()
         self.v5_checkout = Path(os.environ["NEXUS_RIG_V5_CHECKOUT"]).resolve()
         self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
+        production_manifest = os.environ.get("NEXUS_RIG_PRODUCTION_SOURCE_MANIFEST")
+        v5_authority = os.environ.get("NEXUS_RIG_V5_SOURCE_AUTHORITY")
+        self.production_source_manifest = (
+            Path(production_manifest).resolve() if production_manifest else None
+        )
+        self.v5_source_authority = Path(v5_authority).resolve() if v5_authority else None
         self.artifact_path = Path(
             os.environ.get(
                 "NEXUS_RIG_ARTIFACT_PATH",
@@ -121,11 +127,19 @@ class KernelizedNexusRuntimeAdapter:
         if self._assembled is not None:
             raise RuntimeError("kernelized Nexus runtime adapter already started")
         for path, label in (
-            (self.production_checkout, "production donor checkout"),
-            (self.v5_checkout, "V5 assembly checkout"),
+            (self.production_checkout, "production donor source"),
+            (self.v5_checkout, "V5 assembly source"),
         ):
             if not path.is_dir():
                 raise FileNotFoundError(f"{label} not found: {path}")
+        if self.production_source_manifest is not None and not self.production_source_manifest.is_file():
+            raise FileNotFoundError(
+                f"production source manifest not found: {self.production_source_manifest}"
+            )
+        if self.v5_source_authority is not None and not self.v5_source_authority.is_file():
+            raise FileNotFoundError(
+                f"V5 source authority record not found: {self.v5_source_authority}"
+            )
         if not self.legacy_db.is_file():
             raise FileNotFoundError(f"legacy TEST database not found: {self.legacy_db}")
 
@@ -142,6 +156,8 @@ class KernelizedNexusRuntimeAdapter:
                 production_checkout=self.production_checkout,
                 legacy_state_db_path=self.legacy_db,
                 v5_checkout=self.v5_checkout,
+                production_source_manifest_path=self.production_source_manifest,
+                v5_source_authority_path=self.v5_source_authority,
                 allow_mode_lifecycle_writes=True,
                 allow_legacy_memory_writes=False,
                 allow_canonical_memory_writes=False,
