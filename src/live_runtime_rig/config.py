@@ -34,7 +34,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
         raise FileNotFoundError(f"Configuration file not found: {path}")
     values: dict[str, str] = {}
     for line_number, raw_line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
+        path.read_text(encoding="utf-8-sig").splitlines(), start=1
     ):
         line = raw_line.strip()
         if not line or line.startswith("#"):
