@@ -189,6 +189,14 @@ finally {
     Pop-Location
 }
 
+$ReportScript = Join-Path $RigRoot "scripts\report_nexus_kernelized_incomplete.py"
+if (Test-Path $ReportScript) {
+    & $PythonExe $ReportScript --evidence-root $EvidenceRoot
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "WARNING: chain-completion report could not be generated." -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 if ($ExitCode -eq 0) {
