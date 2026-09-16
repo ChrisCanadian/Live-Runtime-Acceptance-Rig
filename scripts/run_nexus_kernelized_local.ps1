@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$LegacyDb = "",
-    [string]$V5Db = ""
+    [string]$V5Db = "",
+    [switch]$AllowUnlinkedState
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,7 +94,7 @@ function Resolve-DatabasePath {
     throw "Could not find $FileName. Re-run with an explicit database path."
 }
 
-Write-Host "" 
+Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " NEXUS SYNAPSE - LOCAL KERNELIZED ACCEPTANCE" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
@@ -153,13 +154,40 @@ New-Item -ItemType Directory -Force -Path $StateRoot, $EvidenceRoot, $ArtifactRo
 $IdentityEnv = Join-Path $StateRoot "identities.env"
 
 Write-Host "Preparing isolated database copies ..." -ForegroundColor DarkGray
-Invoke-Checked -Command {
-    & $PythonExe (Join-Path $NdkaRoot "scripts\prepare_kernelized_acceptance_state.py") `
-        --v5-source $V5DbResolved `
-        --legacy-source $LegacyDbResolved `
-        --target-dir $StateRoot `
-        --identity-env $IdentityEnv
-} -Failure "Failed to create isolated acceptance state."
+$PrepOutput = & $PythonExe (Join-Path $NdkaRoot "scripts\prepare_kernelized_acceptance_state.py") `
+    --v5-source $V5DbResolved `
+    --legacy-source $LegacyDbResolved `
+    --target-dir $StateRoot `
+    --identity-env $IdentityEnv 2>&1
+$PrepExitCode = $LASTEXITCODE
+$PrepOutput | ForEach-Object { Write-Host $_ }
+if ($PrepExitCode -ne 0) {
+    throw "Failed to create isolated acceptance state."
+}
+
+$PrepJson = $null
+try {
+    $PrepJson = ($PrepOutput | Select-Object -Last 1 | Out-String).Trim() | ConvertFrom-Json
+} catch {
+    throw "State preparation completed but did not emit a readable JSON receipt."
+}
+
+$EligibleIdentityCount = [int]$PrepJson.eligible_linked_identity_count
+if ($EligibleIdentityCount -eq 0 -and -not $AllowUnlinkedState) {
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "STATE AUTHORITY DISCONNECTED FOR LINKED DISCORD ACCEPTANCE" -ForegroundColor Yellow
+    Write-Host "The selected legacy and V5 databases are individually healthy, but no DiscordLink row" -ForegroundColor Yellow
+    Write-Host "resolves to exactly one active canonical V5 owner mapping." -ForegroundColor Yellow
+    Write-Host "Legacy: $LegacyDbResolved" -ForegroundColor Yellow
+    Write-Host "V5:     $V5DbResolved" -ForegroundColor Yellow
+    Write-Host "" -ForegroundColor Yellow
+    throw "Full acceptance requires at least one linked canonical Discord identity. Supply the correct -V5Db/-LegacyDb pair, or use -AllowUnlinkedState only for readiness/guest-path diagnostics."
+}
+if ($EligibleIdentityCount -eq 1) {
+    Write-Host "One linked canonical Discord identity found. Cross-user isolation will SKIP." -ForegroundColor Yellow
+} elseif ($EligibleIdentityCount -ge 2) {
+    Write-Host "$EligibleIdentityCount linked canonical Discord identities found." -ForegroundColor DarkGray
+}
 
 if (Test-Path $IdentityEnv) {
     Get-Content $IdentityEnv | ForEach-Object {
@@ -192,7 +220,7 @@ function ForwardSlash([string]$PathValue) {
 $ConfigPath = Join-Path $RunRoot "kernelized-local.env"
 $V5StatePath = ForwardSlash (Join-Path $StateRoot "v5.sqlite")
 $EvidencePath = ForwardSlash $EvidenceRoot
-@"
+$ConfigText = @"
 RIG_RUNTIME_ADAPTER=live_runtime_rig_nexus_kernelized.runtime_adapter:create_runtime_adapter
 RIG_DATABASE_ADAPTER=live_runtime_rig_nexus_kernelized.database_adapter:create_database_adapter
 RIG_CASES=live_runtime_rig_nexus_kernelized.cases:register_cases
@@ -203,7 +231,9 @@ RIG_PUBLIC_SAFE=true
 RIG_INTENTIONAL_FAILURE=false
 RIG_NETWORK_REQUIRED=false
 RIG_ALLOW_ENV_OVERRIDES=false
-"@ | Set-Content -Path $ConfigPath -Encoding UTF8
+"@
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($ConfigPath, $ConfigText, $Utf8NoBom)
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
