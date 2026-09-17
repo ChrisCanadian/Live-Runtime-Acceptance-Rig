@@ -56,7 +56,7 @@ def test_monster_launcher_is_live_docker_and_not_discord_surface_lane():
 
 def test_monster_preserves_exact_authority_pins():
     launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
-    assert "693f5011c2d662d9ffe3c966d347cca07c86c2d6" in launcher
+    assert "8261ba932342b33d26ca9ba29e751356daa838ca" in launcher
     assert "2514a11366f8e7f345bb854c0cfaee8c7b40dddd" in launcher
     assert "48932a94a58f24f54b2fbe81c9d400ddb32f82ed" in launcher
     assert "c612" not in launcher
