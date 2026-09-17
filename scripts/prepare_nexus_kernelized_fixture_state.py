@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 
 def _integrity(path: Path) -> str:
@@ -26,6 +28,139 @@ def _online_backup(source: Path, target: Path) -> None:
     finally:
         target_connection.close()
         source_connection.close()
+
+
+def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _load_module(path: Path, name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load fixture migration: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_production_root(target_dir: Path, explicit: Path | None) -> Path:
+    if explicit is not None:
+        root = explicit.resolve()
+    else:
+        # Monster launcher layout:
+        # .kernelized-local/runs/<run>/state -> .kernelized-local/repos/nexus-synapse-runtime
+        try:
+            cache_root = target_dir.parents[2]
+        except IndexError as exc:
+            raise SystemExit("cannot infer production checkout for fixture reconstruction") from exc
+        root = cache_root / "repos" / "nexus-synapse-runtime"
+    if not root.is_dir():
+        raise SystemExit(f"production checkout not found for fixture reconstruction: {root}")
+    return root
+
+
+def _ensure_cognitive_nodes_fixture(
+    legacy: Path,
+    production_root: Path,
+) -> dict[str, Any]:
+    """Repair only the disposable copy when an older source DB lacks CognitiveNodes.
+
+    Current production code requires this table and the accepted production
+    snapshot records it. The user-supplied source database can legitimately be
+    an older local copy, so the DEVELOPMENT_FIXTURE lane reconstructs the table
+    in the copied DB only. Node definitions are then seeded from the pinned
+    production donor's own migrate_010_global_cognitive_nodes.py rather than
+    invented by the rig.
+    """
+
+    connection = sqlite3.connect(legacy)
+    try:
+        existed = _table_exists(connection, "CognitiveNodes")
+        if not existed:
+            connection.execute(
+                """
+                CREATE TABLE CognitiveNodes (
+                    NodeID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    UserID INTEGER,
+                    NodeName TEXT NOT NULL,
+                    DisplayName TEXT NOT NULL,
+                    Description TEXT NOT NULL,
+                    TriggerIntents TEXT DEFAULT '{}',
+                    TriggerTopics TEXT DEFAULT '{}',
+                    TriggerEmotions TEXT DEFAULT '{}',
+                    TriggerMoods TEXT DEFAULT '{}',
+                    IsAlarmNode INTEGER DEFAULT 0,
+                    ActivationThreshold REAL DEFAULT 0.3,
+                    IsActive INTEGER DEFAULT 1,
+                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    BehavioralInstruction TEXT DEFAULT ''
+                )
+                """
+            )
+            connection.commit()
+
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(CognitiveNodes)").fetchall()
+        }
+        if "BehavioralInstruction" not in columns:
+            connection.execute(
+                "ALTER TABLE CognitiveNodes ADD COLUMN BehavioralInstruction TEXT DEFAULT ''"
+            )
+            connection.commit()
+
+        global_before = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM CognitiveNodes WHERE UserID IS NULL"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+
+    migration = production_root / "migrations" / "migrate_010_global_cognitive_nodes.py"
+    seeded_from_donor = False
+    if global_before == 0:
+        if not migration.is_file():
+            raise SystemExit(f"pinned production CognitiveNodes migration missing: {migration}")
+        module = _load_module(migration, "nexus_rig_production_migrate_010")
+        run = getattr(module, "run", None)
+        if not callable(run):
+            raise SystemExit(f"pinned production CognitiveNodes migration has no run(): {migration}")
+        run(str(legacy))
+        seeded_from_donor = True
+
+    verify = sqlite3.connect(f"file:{legacy}?mode=ro", uri=True)
+    try:
+        verify.execute("PRAGMA query_only=ON")
+        total = int(verify.execute("SELECT COUNT(*) FROM CognitiveNodes").fetchone()[0])
+        global_count = int(
+            verify.execute(
+                "SELECT COUNT(*) FROM CognitiveNodes WHERE UserID IS NULL"
+            ).fetchone()[0]
+        )
+        columns = tuple(
+            str(row[1])
+            for row in verify.execute("PRAGMA table_info(CognitiveNodes)").fetchall()
+        )
+    finally:
+        verify.close()
+
+    if global_count <= 0:
+        raise SystemExit("disposable CognitiveNodes reconstruction produced no global nodes")
+
+    return {
+        "source_table_present": existed,
+        "fixture_table_created": not existed,
+        "seeded_from_pinned_production_migration": seeded_from_donor,
+        "migration": str(migration),
+        "total_rows": total,
+        "global_rows": global_count,
+        "columns": columns,
+    }
 
 
 def _linked_identities(legacy: Path) -> list[tuple[str, str]]:
@@ -73,6 +208,7 @@ def main() -> None:
     parser.add_argument("--legacy-source", type=Path, required=True)
     parser.add_argument("--target-dir", type=Path, required=True)
     parser.add_argument("--identity-env", type=Path, required=True)
+    parser.add_argument("--production-root", type=Path)
     args = parser.parse_args()
 
     legacy_source = args.legacy_source.resolve()
@@ -94,6 +230,9 @@ def main() -> None:
 
     _online_backup(legacy_source, legacy_target)
     sqlite3.connect(v5_target).close()
+
+    production_root = _resolve_production_root(target_dir, args.production_root)
+    cognitive_nodes = _ensure_cognitive_nodes_fixture(legacy_target, production_root)
 
     legacy_integrity = _integrity(legacy_target)
     v5_integrity = _integrity(v5_target)
@@ -117,6 +256,9 @@ def main() -> None:
                 "canonical_identity_acceptance": False,
                 "source_state_mutated": False,
                 "identity_values_emitted": False,
+                "fixture_repairs": {
+                    "CognitiveNodes": cognitive_nodes,
+                },
             },
             sort_keys=True,
         )
