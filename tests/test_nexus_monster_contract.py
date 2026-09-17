@@ -62,13 +62,16 @@ def test_monster_local_debug_is_default_and_public_safe_is_explicit():
     assert "RIG_PUBLIC_SAFE=$PublicSafeValue" in launcher
     assert '$dockerArgs += "--public-safe"' in launcher
     assert "report_nexus_monster_incomplete.py" in launcher
+    assert "--public-safe" in reporter
+    assert "LOCAL RUNTIME FAILURE DIAGNOSTIC" in reporter
+    assert "Full traceback:" in reporter
     assert "from live_runtime_rig_nexus_monster.cases import register_cases" in reporter
     assert 'health["ready"] = bool(health.get("ready_for_test"))' in wrapper
 
 
 def test_monster_preserves_exact_authority_pins():
     launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
-    assert "8261ba932342b33d26ca9ba29e751356daa838ca" in launcher
+    assert "a0dd72af420f3d4c28f7d689f3289d8766149b58" in launcher
     assert "2514a11366f8e7f345bb854c0cfaee8c7b40dddd" in launcher
     assert "48932a94a58f24f54b2fbe81c9d400ddb32f82ed" in launcher
     assert "c612" not in launcher
