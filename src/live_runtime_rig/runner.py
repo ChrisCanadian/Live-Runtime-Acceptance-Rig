@@ -302,11 +302,12 @@ class RigRunner:
             preflight_failed = preflight_failed or not integrity_ok
 
             before = dict(self.database.snapshot_state())
-            protected_before = dict(self.database.protected_state_snapshot())
+            protected_before = {}
             before_payload = {
                 "available": True,
                 "state": before,
-                "protected_state": protected_before,
+                "protected_state": None,
+                "protected_state_baseline": "pending_runtime_initialization",
             }
             self.evidence.write_json("database_before.json", before_payload)
 
@@ -383,6 +384,19 @@ class RigRunner:
         try:
             self.runtime = runtime_factory(self.config)
             self.runtime.start()
+            # Runtime construction may migrate or seed its own disposable state.
+            # Protected-state comparison begins only after that normal setup is
+            # complete, before the campaign is allowed to issue write cases.
+            protected_before = dict(self.database.protected_state_snapshot())
+            self.evidence.write_json(
+                "database_before.json",
+                {
+                    "available": True,
+                    "state": before,
+                    "protected_state": protected_before,
+                    "protected_state_baseline": "post_runtime_initialization",
+                },
+            )
             health = self.runtime.health()
             healthy = health.get("ready") is True
             self._record(
