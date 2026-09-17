@@ -7,8 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from live_runtime_rig_nexus_monster.cases import register_cases
-
 
 PREFLIGHT_PLAN = (
     "Database adapter connection verified",
@@ -16,6 +14,22 @@ PREFLIGHT_PLAN = (
     "Database backup created and verified before writes",
     "Runtime adapter initialized",
     "Direct readiness probe passed",
+)
+
+# Keep this reporter deliberately dependency-free. It runs on the Windows host
+# after the Docker campaign and must not import FastAPI, HTTPX, NDKA, V5, or the
+# monster runtime adapter merely to describe evidence that already exists.
+CASE_PLAN = (
+    ("01 FLIGHT CONTROL INVENTORY", "monster-flight-control-inventory"),
+    ("02 CANONICAL RUNTIME INGRESS", "monster-canonical-ingress-baseline"),
+    ("03 SECURITY / AUTHORITY", "monster-security-authority"),
+    ("04 GOVERNED TOOL LOOP", "monster-runtime-initiated-tool-loop"),
+    ("05 CONTINUITY / RESTART", "monster-continuity-restart"),
+    ("06 CROSS-USER ISOLATION", "monster-cross-user-isolation"),
+    ("07 COGNITION / MODES / LEARNING", "monster-cognition-modes-learning"),
+    ("08 JOBS / ARTIFACTS", "monster-jobs-artifacts"),
+    ("09 FAULT / FAIL-CLOSED", "monster-fault-injection"),
+    ("10 ALL-FLIGHT-CONTROLS GATE", "monster-receipt-coverage-gate"),
 )
 
 _FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+), in (.+)$')
@@ -45,19 +59,11 @@ def _blocked_by(checks: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
-def _failure_diagnostic(
-    run_root: Path,
-    blocked: dict[str, Any] | None,
-    *,
-    public_safe: bool,
-) -> dict[str, Any] | None:
-    if public_safe or not blocked or not blocked.get("evidence_path"):
-        return None
-    evidence_path = run_root / str(blocked["evidence_path"])
-    if not evidence_path.is_file():
+def _diagnostic_from_path(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
         return None
     try:
-        payload = _load_json(evidence_path)
+        payload = _load_json(path)
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -67,11 +73,11 @@ def _failure_diagnostic(
         match = _FRAME_RE.match(line)
         if not match:
             continue
-        path, line_number, function = match.groups()
-        if any(root in path for root in _RELEVANT_ROOTS):
+        frame_path, line_number, function = match.groups()
+        if any(root in frame_path for root in _RELEVANT_ROOTS):
             frames.append(
                 {
-                    "path": path,
+                    "path": frame_path,
                     "line": int(line_number),
                     "function": function,
                 }
@@ -82,15 +88,59 @@ def _failure_diagnostic(
         "message": payload.get("message"),
         "relevant_frames": frames,
         "traceback": traceback_text or None,
+        "evidence_path": str(path),
     }
 
 
-def _case_executed(case: Any, run_root: Path, checks: list[dict[str, Any]]) -> bool:
-    safe_name = str(case.name).replace("/", "_").replace("\\", "_")
+def _failure_diagnostic(
+    run_root: Path,
+    blocked: dict[str, Any] | None,
+    *,
+    public_safe: bool,
+) -> dict[str, Any] | None:
+    if public_safe or not blocked or not blocked.get("evidence_path"):
+        return None
+    return _diagnostic_from_path(run_root / str(blocked["evidence_path"]))
+
+
+def _case_failure_diagnostics(
+    run_root: Path,
+    *,
+    public_safe: bool,
+) -> list[dict[str, Any]]:
+    if public_safe:
+        return []
+    diagnostics: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for path in sorted((run_root / "errors").glob("case_*.json")):
+        diagnostic = _diagnostic_from_path(path)
+        if not diagnostic:
+            continue
+        key = (
+            str(diagnostic.get("exception_type") or ""),
+            str(diagnostic.get("message") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        diagnostic["evidence_path"] = str(path.relative_to(run_root))
+        diagnostics.append(diagnostic)
+    return diagnostics
+
+
+def _case_executed(
+    *,
+    suite: str,
+    name: str,
+    run_root: Path,
+    checks: list[dict[str, Any]],
+) -> bool:
+    safe_name = name.replace("/", "_").replace("\\", "_")
     direct = run_root / "cases" / f"{safe_name}.json"
-    if direct.is_file():
+    error = run_root / "errors" / f"case_{safe_name}.json"
+    if direct.is_file() or error.is_file():
         return True
-    return any(str(check.get("suite")) == str(case.suite) for check in checks)
+    return any(str(check.get("suite")) == suite for check in checks)
 
 
 def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]:
@@ -108,13 +158,9 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
         if name not in observed_preflight:
             not_run.append({"kind": "preflight", "suite": "PREFLIGHT", "name": name})
 
-    for case in register_cases(None):
-        if not _case_executed(case, run_root, checks):
-            not_run.append({
-                "kind": "case",
-                "suite": str(case.suite),
-                "name": str(case.name),
-            })
+    for suite, name in CASE_PLAN:
+        if not _case_executed(suite=suite, name=name, run_root=run_root, checks=checks):
+            not_run.append({"kind": "case", "suite": suite, "name": name})
 
     if "PROTECTED STATE" not in observed_suites:
         not_run.append({
@@ -125,7 +171,7 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
 
     blocked = _blocked_by(checks)
     report = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "plan": "nexus-full-runtime-monster",
         "run_id": run.get("run_id"),
         "framework_status": run.get("framework_status"),
@@ -137,6 +183,10 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
             blocked,
             public_safe=public_safe,
         ),
+        "case_failure_diagnostics": _case_failure_diagnostics(
+            run_root,
+            public_safe=public_safe,
+        ),
         "not_run_count": len(not_run),
         "not_run": not_run,
     }
@@ -145,6 +195,25 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
         encoding="utf-8",
     )
     return report
+
+
+def _print_diagnostic(diagnostic: dict[str, Any], *, title: str) -> None:
+    print()
+    print(title)
+    print("-" * len(title))
+    if diagnostic.get("evidence_path"):
+        print(f"Evidence:  {diagnostic['evidence_path']}")
+    print(f"Exception: {diagnostic.get('exception_type')}")
+    print(f"Message:   {diagnostic.get('message')}")
+    frames = list(diagnostic.get("relevant_frames") or [])
+    if frames:
+        print("Relevant application frames:")
+        for frame in frames:
+            print(f"  {frame['path']}:{frame['line']} in {frame['function']}")
+    traceback_text = diagnostic.get("traceback")
+    if traceback_text:
+        print("Full traceback:")
+        print(traceback_text.rstrip())
 
 
 def print_report(report: dict[str, Any], *, public_safe: bool = False) -> None:
@@ -162,24 +231,18 @@ def print_report(report: dict[str, Any], *, public_safe: bool = False) -> None:
 
     diagnostic = report.get("failure_diagnostic")
     if diagnostic:
-        print()
-        print("LOCAL RUNTIME FAILURE DIAGNOSTIC")
-        print("--------------------------------")
-        print(f"Exception: {diagnostic.get('exception_type')}")
-        print(f"Message:   {diagnostic.get('message')}")
-        frames = list(diagnostic.get("relevant_frames") or [])
-        if frames:
-            print("Relevant application frames:")
-            for frame in frames:
-                print(
-                    f"  {frame['path']}:{frame['line']} in {frame['function']}"
-                )
-        traceback_text = diagnostic.get("traceback")
-        if traceback_text:
-            print("Full traceback:")
-            print(traceback_text.rstrip())
+        _print_diagnostic(diagnostic, title="LOCAL RUNTIME FAILURE DIAGNOSTIC")
     elif public_safe and blocked:
         print("Diagnostic detail: REDACTED (public-safe mode)")
+
+    case_diagnostics = list(report.get("case_failure_diagnostics") or [])
+    if case_diagnostics:
+        print()
+        print("CASE EXCEPTION DIAGNOSTICS")
+        print("--------------------------")
+        print(f"Unique case exceptions: {len(case_diagnostics)}")
+        for index, item in enumerate(case_diagnostics, start=1):
+            _print_diagnostic(item, title=f"CASE EXCEPTION {index}")
 
     items = list(report.get("not_run") or [])
     print(f"Not run:    {len(items)}")
