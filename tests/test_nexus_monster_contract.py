@@ -48,10 +48,22 @@ def test_monster_launcher_is_live_docker_and_not_discord_surface_lane():
     launcher = Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1"
     source = launcher.read_text(encoding="utf-8")
     assert "FULL RUNTIME FLIGHT-CONTROL MONSTER RIG" in source
-    assert "live_runtime_rig_nexus_monster.runtime_adapter:create_runtime_adapter" in source
+    assert "live_runtime_rig_nexus_monster.runtime_adapter_contract:create_runtime_adapter" in source
     assert "live_runtime_rig_nexus_monster.cases:register_cases" in source
     assert '"--network", "none"' in source
     assert "run_nexus_kernelized_fixture_docker.ps1" not in source
+
+
+def test_monster_local_debug_is_default_and_public_safe_is_explicit():
+    launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
+    reporter = (Path(__file__).parents[1] / "scripts" / "report_nexus_monster_incomplete.py").read_text(encoding="utf-8")
+    wrapper = (Path(__file__).parents[1] / "src" / "live_runtime_rig_nexus_monster" / "runtime_adapter_contract.py").read_text(encoding="utf-8")
+    assert "[switch]$PublicSafe" in launcher
+    assert "RIG_PUBLIC_SAFE=$PublicSafeValue" in launcher
+    assert '$dockerArgs += "--public-safe"' in launcher
+    assert "report_nexus_monster_incomplete.py" in launcher
+    assert "from live_runtime_rig_nexus_monster.cases import register_cases" in reporter
+    assert 'health["ready"] = bool(health.get("ready_for_test"))' in wrapper
 
 
 def test_monster_preserves_exact_authority_pins():
