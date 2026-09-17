@@ -64,8 +64,10 @@ def test_monster_local_debug_is_default_and_public_safe_is_explicit():
     assert "report_nexus_monster_incomplete.py" in launcher
     assert "--public-safe" in reporter
     assert "LOCAL RUNTIME FAILURE DIAGNOSTIC" in reporter
+    assert "CASE EXCEPTION DIAGNOSTICS" in reporter
     assert "Full traceback:" in reporter
-    assert "from live_runtime_rig_nexus_monster.cases import register_cases" in reporter
+    assert "CASE_PLAN = (" in reporter
+    assert "from live_runtime_rig_nexus_monster.cases import register_cases" not in reporter
     assert 'health["ready"] = bool(health.get("ready_for_test"))' in wrapper
 
 
