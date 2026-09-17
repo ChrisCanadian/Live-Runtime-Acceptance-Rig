@@ -38,6 +38,54 @@ REQUIRED_KERNEL_IDS = (
 )
 
 
+class _InProcessASGIClient:
+    """Tiny synchronous facade over HTTPX's supported ASGI transport.
+
+    The monster image intentionally installs the exact accepted V2 dependency
+    lock. That lock contains Starlette 0.35.1 and HTTPX 0.28.1. Starlette's
+    TestClient from that generation still forwards ``app=`` into
+    ``httpx.Client``, while HTTPX 0.28 removed that constructor argument.
+
+    Do not mutate the accepted runtime dependency lock merely to make the rig's
+    test harness happy. This client keeps the acceptance boundary at real ASGI
+    HTTP semantics, stays fully in-process/no-network, and uses HTTPX's current
+    supported ``ASGITransport`` API instead.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+        self._closed = False
+
+    async def _request_async(self, method: str, path: str, **kwargs: Any):
+        import httpx
+
+        transport = httpx.ASGITransport(app=self._app, raise_app_exceptions=True)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://nexus-rig.invalid",
+        ) as client:
+            return await client.request(method, path, **kwargs)
+
+    def request(self, method: str, path: str, **kwargs: Any):
+        if self._closed:
+            raise RuntimeError("monster ASGI client is closed")
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "monster ASGI client synchronous facade cannot run inside an active event loop"
+            )
+        return asyncio.run(self._request_async(method, path, **kwargs))
+
+    def post(self, path: str, **kwargs: Any):
+        return self.request("POST", path, **kwargs)
+
+    def close(self) -> None:
+        self._closed = True
+
+
 class KernelizedMonsterRuntimeAdapter:
     def __init__(self, config: RigConfig) -> None:
         self.config = config
@@ -123,7 +171,6 @@ class KernelizedMonsterRuntimeAdapter:
         self._configure_v5_environment()
 
         from fastapi import FastAPI, Request
-        from fastapi.testclient import TestClient
         from nexus_ndka.host.runtime_bootstrap import (
             KernelizedTestRuntimeConfig,
             build_kernelized_test_runtime,
@@ -160,7 +207,7 @@ class KernelizedMonsterRuntimeAdapter:
         )
         self._assembled = assembled
         self._app = app
-        self._client = TestClient(app)
+        self._client = _InProcessASGIClient(app)
 
     def close(self) -> None:
         client = self._client
