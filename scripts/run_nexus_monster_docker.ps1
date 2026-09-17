@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "8261ba932342b33d26ca9ba29e751356daa838ca"
+$NDKA_SHA = "a0dd72af420f3d4c28f7d689f3289d8766149b58"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "48932a94a58f24f54b2fbe81c9d400ddb32f82ed"
 
@@ -190,7 +190,12 @@ try {
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($null -ne $RunJson) {
-        & python (Join-Path $RigRoot "scripts\report_nexus_monster_incomplete.py") --run-root $RunJson.Directory.FullName
+        $Reporter = Join-Path $RigRoot "scripts\report_nexus_monster_incomplete.py"
+        if ($PublicSafe) {
+            & python $Reporter --run-root $RunJson.Directory.FullName --public-safe
+        } else {
+            & python $Reporter --run-root $RunJson.Directory.FullName
+        }
     } else {
         Write-Host ""
         Write-Host "MONSTER CHAIN COMPLETION REPORT UNAVAILABLE: container exited before run.json was written." -ForegroundColor Yellow
