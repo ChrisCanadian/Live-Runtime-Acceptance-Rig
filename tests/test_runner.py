@@ -69,6 +69,8 @@ def test_complete_toy_campaign_passes_and_compares_protected_state(tmp_path) -> 
         and check["status"] == "PASS"
         for check in run["checks"]
     )
+    before = json.loads((runner.evidence.root / "database_before.json").read_text(encoding="utf-8"))
+    assert before["protected_state_baseline"] == "post_runtime_initialization"
     assert len(cleanup["entries"]) == 7
     assert cleanup["automatic_cleanup_performed"] is False
 

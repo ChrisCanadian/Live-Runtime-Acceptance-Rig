@@ -8,7 +8,7 @@ from live_runtime_rig.console import Console
 from live_runtime_rig.runner import RigRunner, RunnerOptions
 
 
-def _write_config(path, *, allow_overrides: bool = False) -> None:
+def _write_config(path, *, allow_overrides: bool = False, encoding: str = "utf-8") -> None:
     path.write_text(
         "\n".join(
             (
@@ -23,7 +23,7 @@ def _write_config(path, *, allow_overrides: bool = False) -> None:
             )
         )
         + "\n",
-        encoding="utf-8",
+        encoding=encoding,
     )
 
 
@@ -37,6 +37,14 @@ def test_ambient_override_is_ignored_without_explicit_opt_in(tmp_path) -> None:
     assert config.application_label == "file-label"
     assert config.provenance["RIG_APPLICATION_LABEL"] == "config file"
     assert config.ignored_environment_overrides == ("RIG_APPLICATION_LABEL",)
+
+
+def test_utf8_bom_configuration_loads_first_key_normally(tmp_path) -> None:
+    path = tmp_path / "windows.env"
+    _write_config(path, encoding="utf-8-sig")
+    config = RigConfig.load(path, environment={})
+    assert config.runtime_adapter == "file:runtime"
+    assert config.database_adapter == "file:database"
 
 
 def test_environment_override_opt_in_records_provenance(tmp_path) -> None:
