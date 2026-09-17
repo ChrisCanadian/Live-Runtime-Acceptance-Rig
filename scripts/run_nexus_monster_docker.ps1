@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$LegacyDb = "C:\Users\Chris\Nexus_Runtime_Source\data\Nexus_Framework_ProdV2.db"
+    [string]$LegacyDb = "C:\Users\Chris\Nexus_Runtime_Source\data\Nexus_Framework_ProdV2.db",
+    [switch]$PublicSafe
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,9 @@ function Ensure-ExactCheckout {
     if ($observed -ne $Sha) { throw "$Repository checkout mismatch. Expected $Sha, observed $observed" }
 }
 
+$EvidenceMode = if ($PublicSafe) { "PUBLIC-SAFE / REDACTED" } else { "LOCAL DEBUG / FULL TRACEBACK" }
+$PublicSafeValue = if ($PublicSafe) { "true" } else { "false" }
+
 Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Magenta
 Write-Host " NEXUS SYNAPSE - FULL RUNTIME FLIGHT-CONTROL MONSTER RIG" -ForegroundColor Magenta
@@ -50,6 +54,7 @@ Write-Host "====================================================================
 Write-Host "Classification: DEVELOPMENT_FIXTURE / FULL-RUNTIME GATE" -ForegroundColor Yellow
 Write-Host "Ingress:        CANONICAL /v1/chat/completions" -ForegroundColor Yellow
 Write-Host "Execution:      LOCAL DOCKER / LIVE TERMINAL STREAM" -ForegroundColor Yellow
+Write-Host "Evidence mode:  $EvidenceMode" -ForegroundColor Yellow
 Write-Host "NDKA:           $NDKA_SHA"
 Write-Host "Production:     $PRODUCTION_SHA"
 Write-Host "V5:             $V5_SHA"
@@ -58,6 +63,9 @@ Write-Host ""
 Write-Host "GREEN means all required flight controls actually executed and passed." -ForegroundColor Yellow
 Write-Host "Required controls never disappear behind SKIP." -ForegroundColor Yellow
 Write-Host "This is local fixture evidence, NOT deployed TEST acceptance." -ForegroundColor Yellow
+if (-not $PublicSafe) {
+    Write-Host "Developer debug is enabled: local evidence may contain exception details and paths." -ForegroundColor Yellow
+}
 Write-Host ""
 
 if (-not (Test-Path $LegacyDb -PathType Leaf)) { throw "Legacy database not found: $LegacyDb" }
@@ -95,13 +103,13 @@ if ($PrepExitCode -ne 0) { throw "Failed to create monster fixture state." }
 
 $ConfigPath = Join-Path $RunRoot "nexus-monster.env"
 $ConfigText = @"
-RIG_RUNTIME_ADAPTER=live_runtime_rig_nexus_monster.runtime_adapter:create_runtime_adapter
+RIG_RUNTIME_ADAPTER=live_runtime_rig_nexus_monster.runtime_adapter_contract:create_runtime_adapter
 RIG_DATABASE_ADAPTER=live_runtime_rig_nexus_kernelized.database_adapter:create_database_adapter
 RIG_CASES=live_runtime_rig_nexus_monster.cases:register_cases
 RIG_DATABASE_PATH=/run/state/v5.sqlite
 RIG_EVIDENCE_DIR=/run/evidence
 RIG_APPLICATION_LABEL=nexus-full-runtime-monster
-RIG_PUBLIC_SAFE=true
+RIG_PUBLIC_SAFE=$PublicSafeValue
 RIG_INTENTIONAL_FAILURE=false
 RIG_NETWORK_REQUIRED=false
 RIG_ALLOW_ENV_OVERRIDES=false
@@ -155,9 +163,11 @@ $dockerArgs = @(
     "--mount", "type=bind,source=$RunRoot,target=/run",
     $ImageTag,
     "--config", "/run/nexus-monster.env",
-    "--public-safe",
     "--verbose"
 )
+if ($PublicSafe) {
+    $dockerArgs += "--public-safe"
+}
 
 Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Green
@@ -165,6 +175,7 @@ Write-Host " STARTING FULL RUNTIME FLIGHT-CONTROL CAMPAIGN" -ForegroundColor Gre
 Write-Host "======================================================================" -ForegroundColor Green
 Write-Host "Run directory: $RunRoot" -ForegroundColor DarkGray
 Write-Host "Output mode:   VERBOSE / LIVE" -ForegroundColor DarkGray
+Write-Host "Evidence mode: $EvidenceMode" -ForegroundColor DarkGray
 Write-Host "Network:       NONE" -ForegroundColor DarkGray
 Write-Host "Ingress:       /v1/chat/completions" -ForegroundColor DarkGray
 Write-Host ""
@@ -179,10 +190,10 @@ try {
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($null -ne $RunJson) {
-        & python (Join-Path $RigRoot "scripts\report_nexus_kernelized_incomplete.py") --run-root $RunJson.Directory.FullName
+        & python (Join-Path $RigRoot "scripts\report_nexus_monster_incomplete.py") --run-root $RunJson.Directory.FullName
     } else {
         Write-Host ""
-        Write-Host "CHAIN COMPLETION REPORT UNAVAILABLE: container exited before run.json was written." -ForegroundColor Yellow
+        Write-Host "MONSTER CHAIN COMPLETION REPORT UNAVAILABLE: container exited before run.json was written." -ForegroundColor Yellow
     }
 } finally {
     $env:PYTHONPATH = $OldPythonPath
@@ -196,6 +207,7 @@ if ($ExitCode -eq 0) {
     Write-Host " FULL RUNTIME MONSTER CAMPAIGN: RED ($ExitCode)" -ForegroundColor Red
 }
 Write-Host " Classification: DEVELOPMENT_FIXTURE / FULL-RUNTIME GATE" -ForegroundColor Yellow
+Write-Host " Evidence mode: $EvidenceMode" -ForegroundColor Yellow
 Write-Host " Evidence/state: $RunRoot" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
