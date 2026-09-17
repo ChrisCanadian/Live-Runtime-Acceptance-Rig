@@ -14,6 +14,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from fastapi import Request
+
 from live_runtime_rig.config import RigConfig
 
 
@@ -188,7 +190,7 @@ class KernelizedMonsterRuntimeAdapter:
 
         self._configure_v5_environment()
 
-        from fastapi import FastAPI, Request
+        from fastapi import FastAPI
         from nexus_ndka.host.runtime_bootstrap import (
             KernelizedTestRuntimeConfig,
             build_kernelized_test_runtime,

@@ -4,7 +4,10 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 
-from live_runtime_rig_nexus_monster.runtime_adapter import _InProcessASGIClient
+from live_runtime_rig_nexus_monster.runtime_adapter import (
+    KernelizedMonsterRuntimeAdapter,
+    _InProcessASGIClient,
+)
 
 
 def test_monster_asgi_client_executes_real_in_process_http_request() -> None:
@@ -71,3 +74,8 @@ def test_monster_asgi_client_fails_closed_after_close() -> None:
 
     with pytest.raises(RuntimeError, match="client is closed"):
         client.post("/anything")
+
+
+def test_monster_principal_dependency_request_annotation_is_module_resolvable() -> None:
+    '''Prevent FastAPI from treating a postponed local Request annotation as a query field.'''
+    assert KernelizedMonsterRuntimeAdapter.start.__globals__['Request'] is Request
