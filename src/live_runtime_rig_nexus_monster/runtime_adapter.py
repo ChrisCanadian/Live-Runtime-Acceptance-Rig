@@ -38,6 +38,24 @@ REQUIRED_KERNEL_IDS = (
 )
 
 
+def _inventory_payload(inventory: Any) -> dict[str, tuple[str, ...]]:
+    """Project NDKA's authoritative KernelInventoryView without inventing fields.
+
+    NDKA names the live registry membership ``registered``. ``present`` remains
+    only as a rig compatibility alias for older monster-case code; both are
+    sourced from the same authoritative ``registered`` tuple.
+    """
+
+    registered = tuple(inventory.registered)
+    return {
+        "expected": tuple(inventory.expected),
+        "registered": registered,
+        "present": registered,
+        "missing": tuple(inventory.missing),
+        "unexpected": tuple(inventory.unexpected),
+    }
+
+
 class _InProcessASGIClient:
     """Tiny synchronous facade over HTTPX's supported ASGI transport.
 
@@ -292,10 +310,7 @@ class KernelizedMonsterRuntimeAdapter:
         inventory = assembled.host.observability.inventory()
         return {
             "ready_for_test": readiness.ready_for_test,
-            "expected": tuple(inventory.expected),
-            "present": tuple(inventory.present),
-            "missing": tuple(inventory.missing),
-            "unexpected": tuple(inventory.unexpected),
+            **_inventory_payload(inventory),
             "degraded_kernel_ids": tuple(readiness.degraded_kernel_ids),
             "failed_kernel_ids": tuple(readiness.failed_kernel_ids),
         }
@@ -326,15 +341,7 @@ class KernelizedMonsterRuntimeAdapter:
             return _MappingResponse(status, body)
         if normalized == "GET" and path == "/kernel-inventory":
             inventory = assembled.host.observability.inventory()
-            return _MappingResponse(
-                200,
-                {
-                    "expected": tuple(inventory.expected),
-                    "present": tuple(inventory.present),
-                    "missing": tuple(inventory.missing),
-                    "unexpected": tuple(inventory.unexpected),
-                },
-            )
+            return _MappingResponse(200, _inventory_payload(inventory))
         if normalized == "GET" and path == "/coverage":
             return _MappingResponse(200, dict(self.coverage()))
         if normalized == "POST" and path == "/__rig/restart":
