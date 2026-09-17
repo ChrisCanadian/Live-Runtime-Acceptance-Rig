@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,9 @@ PREFLIGHT_PLAN = (
     "Runtime adapter initialized",
     "Direct readiness probe passed",
 )
+
+_FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+), in (.+)$')
+_RELEVANT_ROOTS = ("/rig/", "/ndka/", "/production/", "/v5/")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -41,6 +45,46 @@ def _blocked_by(checks: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+def _failure_diagnostic(
+    run_root: Path,
+    blocked: dict[str, Any] | None,
+    *,
+    public_safe: bool,
+) -> dict[str, Any] | None:
+    if public_safe or not blocked or not blocked.get("evidence_path"):
+        return None
+    evidence_path = run_root / str(blocked["evidence_path"])
+    if not evidence_path.is_file():
+        return None
+    try:
+        payload = _load_json(evidence_path)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    traceback_text = str(payload.get("traceback") or "")
+    frames: list[dict[str, Any]] = []
+    for line in traceback_text.splitlines():
+        match = _FRAME_RE.match(line)
+        if not match:
+            continue
+        path, line_number, function = match.groups()
+        if any(root in path for root in _RELEVANT_ROOTS):
+            frames.append(
+                {
+                    "path": path,
+                    "line": int(line_number),
+                    "function": function,
+                }
+            )
+
+    return {
+        "exception_type": payload.get("exception_type"),
+        "message": payload.get("message"),
+        "relevant_frames": frames,
+        "traceback": traceback_text or None,
+    }
+
+
 def _case_executed(case: Any, run_root: Path, checks: list[dict[str, Any]]) -> bool:
     safe_name = str(case.name).replace("/", "_").replace("\\", "_")
     direct = run_root / "cases" / f"{safe_name}.json"
@@ -49,7 +93,7 @@ def _case_executed(case: Any, run_root: Path, checks: list[dict[str, Any]]) -> b
     return any(str(check.get("suite")) == str(case.suite) for check in checks)
 
 
-def build_report(run_root: Path) -> dict[str, Any]:
+def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]:
     run = _load_json(run_root / "run.json")
     checks = list(run.get("checks") or [])
     observed_preflight = {
@@ -79,14 +123,20 @@ def build_report(run_root: Path) -> dict[str, Any]:
             "name": "protected-state-unchanged",
         })
 
+    blocked = _blocked_by(checks)
     report = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "plan": "nexus-full-runtime-monster",
         "run_id": run.get("run_id"),
         "framework_status": run.get("framework_status"),
         "acceptance_status": run.get("acceptance_status"),
         "result_code": run.get("result_code"),
-        "blocked_by": _blocked_by(checks),
+        "blocked_by": blocked,
+        "failure_diagnostic": _failure_diagnostic(
+            run_root,
+            blocked,
+            public_safe=public_safe,
+        ),
         "not_run_count": len(not_run),
         "not_run": not_run,
     }
@@ -97,7 +147,7 @@ def build_report(run_root: Path) -> dict[str, Any]:
     return report
 
 
-def print_report(report: dict[str, Any]) -> None:
+def print_report(report: dict[str, Any], *, public_safe: bool = False) -> None:
     blocked = report.get("blocked_by")
     print()
     print("MONSTER CHAIN COMPLETION REPORT")
@@ -109,6 +159,27 @@ def print_report(report: dict[str, Any]) -> None:
             print(f"Evidence:   {blocked['evidence_path']}")
     else:
         print("Blocked by: none")
+
+    diagnostic = report.get("failure_diagnostic")
+    if diagnostic:
+        print()
+        print("LOCAL RUNTIME FAILURE DIAGNOSTIC")
+        print("--------------------------------")
+        print(f"Exception: {diagnostic.get('exception_type')}")
+        print(f"Message:   {diagnostic.get('message')}")
+        frames = list(diagnostic.get("relevant_frames") or [])
+        if frames:
+            print("Relevant application frames:")
+            for frame in frames:
+                print(
+                    f"  {frame['path']}:{frame['line']} in {frame['function']}"
+                )
+        traceback_text = diagnostic.get("traceback")
+        if traceback_text:
+            print("Full traceback:")
+            print(traceback_text.rstrip())
+    elif public_safe and blocked:
+        print("Diagnostic detail: REDACTED (public-safe mode)")
 
     items = list(report.get("not_run") or [])
     print(f"Not run:    {len(items)}")
@@ -126,6 +197,7 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--run-root", type=Path)
     group.add_argument("--evidence-root", type=Path)
+    parser.add_argument("--public-safe", action="store_true")
     args = parser.parse_args()
 
     run_root = (
@@ -135,8 +207,8 @@ def main() -> int:
     )
     if not (run_root / "run.json").is_file():
         raise SystemExit(f"run.json not found beneath {run_root}")
-    report = build_report(run_root)
-    print_report(report)
+    report = build_report(run_root, public_safe=args.public_safe)
+    print_report(report, public_safe=args.public_safe)
     return 0
 
 
