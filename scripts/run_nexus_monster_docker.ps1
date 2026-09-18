@@ -3,6 +3,7 @@ param(
     [string]$LegacyDb = "C:\Users\Chris\SSR_Minimal\data\Nexus_Framework_ProdV2.db",
     [string]$V5Db = "C:\Users\Chris\Documents\Codex\2026-07-13\can\NEXUS_V5_RECONSTRUCTION\var\nexus.db",
     [string]$ProviderEnvFile = "C:\Users\Chris\SSR_Minimal\.env",
+    [string]$LegacyChromaDir = "C:\Users\Chris\SSR_Minimal\data\chroma_db",
     [ValidateSet("apifree-qwen3.5-397b")]
     [string]$ProviderKind = "apifree-qwen3.5-397b",
     [switch]$PublicSafe
@@ -86,15 +87,15 @@ function Ensure-ExactCheckout {
     if (-not (Test-Path (Join-Path $Destination ".git"))) {
         if (Test-Path $Destination) { Remove-Item -Recurse -Force $Destination }
         Write-Host "Cloning $Repository ..." -ForegroundColor DarkGray
-        Invoke-Checked -Command { gh repo clone $Repository $Destination -- --filter=blob:none } -Failure "Failed to clone $Repository"
+        Invoke-Checked -Command { gh repo clone $Repository $Destination -- --filter=blob:none --quiet } -Failure "Failed to clone $Repository"
     }
     Write-Host "Pinning $Repository to $Sha ..." -ForegroundColor DarkGray
-    Invoke-Checked -Command { git -C $Destination fetch origin $Sha --depth=1 } -Failure "Failed to fetch $Repository@$Sha"
-    Invoke-Checked -Command { git -C $Destination checkout --detach $Sha } -Failure "Failed to checkout $Repository@$Sha"
+    Invoke-Checked -Command { git -C $Destination fetch --quiet origin $Sha --depth=1 } -Failure "Failed to fetch $Repository@$Sha"
+    Invoke-Checked -Command { git -C $Destination checkout --quiet --detach $Sha } -Failure "Failed to checkout $Repository@$Sha"
     # Cached Windows clones may still contain worktree bytes produced under an
     # older .gitattributes policy. Hard-reset after the target commit is active
     # so byte-exact staged donor files are rewritten using the target attributes.
-    Invoke-Checked -Command { git -C $Destination reset --hard $Sha } -Failure "Failed to normalize checkout $Repository@$Sha"
+    Invoke-Checked -Command { git -C $Destination reset --quiet --hard $Sha } -Failure "Failed to normalize checkout $Repository@$Sha"
     $observed = (git -C $Destination rev-parse HEAD).Trim()
     if ($observed -ne $Sha) { throw "$Repository checkout mismatch. Expected $Sha, observed $observed" }
 }
@@ -128,11 +129,27 @@ Write-Host ""
 
 if (-not (Test-Path $LegacyDb -PathType Leaf)) { throw "Legacy database not found: $LegacyDb" }
 if (-not (Test-Path $V5Db -PathType Leaf)) { throw "V5 state database not found: $V5Db" }
+if (-not (Test-Path $LegacyChromaDir -PathType Container)) {
+    throw "Production ChromaDB directory not found: $LegacyChromaDir"
+}
+
+try {
+    $OllamaTags = Invoke-RestMethod -Method Get -Uri "http://localhost:11434/api/tags" -TimeoutSec 5
+} catch {
+    throw "Local Ollama is required for production RAG embeddings but is not reachable at http://localhost:11434."
+}
+$OllamaModels = @($OllamaTags.models | ForEach-Object { [string]$_.name })
+if (-not ($OllamaModels | Where-Object { $_ -like "nomic-embed-text*" })) {
+    throw "Production RAG requires nomic-embed-text, but that model is not installed in local Ollama."
+}
+Write-Host "RAG embedding host: VERIFIED (nomic-embed-text)" -ForegroundColor DarkGray
 
 $ProviderEnv = Read-DotEnv -Path $ProviderEnvFile
 Require-RealProviderConfiguration -DotEnv $ProviderEnv -Kind $ProviderKind
 
-Invoke-Checked -Command { gh auth status } -Failure "GitHub CLI is not authenticated."
+& gh auth status *> $null
+if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not authenticated." }
+Write-Host "GitHub auth: VERIFIED" -ForegroundColor DarkGray
 Invoke-Checked -Command { git --version } -Failure "Git is not available on PATH."
 Invoke-Checked -Command { python --version } -Failure "Python is not available on PATH."
 Invoke-Checked -Command { docker version } -Failure "Docker is not running or is unavailable. Start Docker Desktop and rerun."
@@ -182,11 +199,22 @@ Write-Host "Preparing isolated Monster state from production User 18 sources ...
 $PrepOutput = & python (Join-Path $NdkaRoot "scripts\prepare_kernelized_acceptance_state.py") `
     --v5-source $V5Db `
     --legacy-source $LegacyDb `
+    --production-checkout $ProductionRoot `
     --target-dir $StateRoot `
     --identity-env $IdentityEnv 2>&1
 $PrepExitCode = $LASTEXITCODE
 $PrepOutput | ForEach-Object { Write-Host $_ }
 if ($PrepExitCode -ne 0) { throw "Failed to create Monster state copies." }
+
+$ProductionDataRoot = Join-Path $StateRoot "production-data"
+$StateChroma = Join-Path $ProductionDataRoot "chroma_db"
+New-Item -ItemType Directory -Force -Path $ProductionDataRoot | Out-Null
+Write-Host "Copying production ChromaDB into disposable Monster state ..." -ForegroundColor DarkGray
+Copy-Item -Path $LegacyChromaDir -Destination $StateChroma -Recurse -Force
+if (-not (Test-Path $StateChroma -PathType Container)) {
+    throw "Disposable ChromaDB copy was not created."
+}
+Write-Host "RAG state copy: VERIFIED ($StateChroma)" -ForegroundColor DarkGray
 
 $ConfigPath = Join-Path $RunRoot "nexus-monster.env"
 $ConfigText = @"
@@ -245,9 +273,11 @@ $dockerArgs = @(
     "-e", "NEXUS_DEPLOYMENT_ID=local-monster-$RunId",
     "-e", "NEXUS_RUNTIME_VERSION=ndka-monster-$NDKA_SHA",
     "-e", "NLP_ENABLED=false",
+    "-e", "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434",
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
     "--mount", "type=bind,source=$ProductionRoot,target=/production,readonly",
+    "--mount", "type=bind,source=$ProductionDataRoot,target=/production/data",
     "--mount", "type=bind,source=$RunRoot,target=/run",
     $ImageTag,
     "--config", "/run/nexus-monster.env",
