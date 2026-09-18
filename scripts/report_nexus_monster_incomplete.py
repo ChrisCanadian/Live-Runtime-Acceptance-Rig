@@ -24,10 +24,10 @@ CASE_PLAN = (
     ("02 CANONICAL RUNTIME INGRESS", "monster-canonical-ingress-baseline"),
     ("03 SECURITY / AUTHORITY", "monster-security-authority"),
     ("04 GOVERNED TOOL LOOP", "monster-runtime-initiated-tool-loop"),
-    ("05 CONTINUITY / RESTART", "monster-continuity-restart"),
+    ("05 MEMORY CONTINUITY / CONTINUITY BOUNDARY", "monster-continuity-restart"),
     ("06 CROSS-USER ISOLATION", "monster-cross-user-isolation"),
     ("07 COGNITION / MODES / LEARNING", "monster-cognition-modes-learning"),
-    ("08 JOBS / ARTIFACTS", "monster-jobs-artifacts"),
+    ("08 JOBS / ARTIFACTS / SURFACES", "monster-jobs-artifacts-surfaces"),
     ("09 FAULT / FAIL-CLOSED", "monster-fault-injection"),
     ("10 ALL-FLIGHT-CONTROLS GATE", "monster-receipt-coverage-gate"),
 )
