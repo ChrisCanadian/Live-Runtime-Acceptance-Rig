@@ -153,17 +153,17 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
     }
     observed_suites = {str(check.get("suite")) for check in checks}
 
-    not_run: list[dict[str, str]] = []
+    not_run_stages: list[dict[str, str]] = []
     for name in PREFLIGHT_PLAN:
         if name not in observed_preflight:
-            not_run.append({"kind": "preflight", "suite": "PREFLIGHT", "name": name})
+            not_run_stages.append({"kind": "preflight", "suite": "PREFLIGHT", "name": name})
 
     for suite, name in CASE_PLAN:
         if not _case_executed(suite=suite, name=name, run_root=run_root, checks=checks):
-            not_run.append({"kind": "case", "suite": suite, "name": name})
+            not_run_stages.append({"kind": "case", "suite": suite, "name": name})
 
     if "PROTECTED STATE" not in observed_suites:
-        not_run.append({
+        not_run_stages.append({
             "kind": "postflight",
             "suite": "PROTECTED STATE",
             "name": "protected-state-unchanged",
@@ -187,8 +187,10 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
             run_root,
             public_safe=public_safe,
         ),
-        "not_run_count": len(not_run),
-        "not_run": not_run,
+        "not_run_check_count": int((run.get("summary") or {}).get("not_run", 0)),
+        "not_run_checks": list(run.get("not_run_checks") or []),
+        "not_run_stage_count": len(not_run_stages),
+        "not_run": not_run_stages,
     }
     (run_root / "not_run.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
@@ -244,12 +246,23 @@ def print_report(report: dict[str, Any], *, public_safe: bool = False) -> None:
         for index, item in enumerate(case_diagnostics, start=1):
             _print_diagnostic(item, title=f"CASE EXCEPTION {index}")
 
-    items = list(report.get("not_run") or [])
-    print(f"Not run:    {len(items)}")
-    if items:
+    checks_not_run = list(report.get("not_run_checks") or [])
+    stages_not_run = list(report.get("not_run") or [])
+    print(f"Not run checks: {int(report.get('not_run_check_count') or len(checks_not_run))}")
+    print(f"Not run stages: {len(stages_not_run)}")
+
+    if checks_not_run:
         print()
-        print("MONSTER FLIGHT CONTROLS NOT COMPLETED")
-        for item in items:
+        print("MONSTER ACCEPTANCE CHECKS NOT RUN")
+        print("---------------------------------")
+        for item in checks_not_run:
+            print(f"  [NOT RUN] {item['suite']} :: {item['name']}")
+
+    if stages_not_run:
+        print()
+        print("MONSTER FLIGHT-CONTROL STAGES NOT REACHED")
+        print("------------------------------------------")
+        for item in stages_not_run:
             print(f"  [NOT RUN] {item['suite']} :: {item['name']}")
     else:
         print("All planned monster flight-control stages were reached.")
