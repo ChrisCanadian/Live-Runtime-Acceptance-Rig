@@ -392,15 +392,15 @@ class FaultInjectionCase:
     planned_checks = (
         "Malformed runtime request fails closed",
         "Caller cannot override provider binding",
-        "Provider failure injection flight control is commissioned",
-        "Tool timeout injection flight control is commissioned",
-        "Evidence failure injection flight control is commissioned",
+        "Provider backend timeout becomes a bounded FAILED receipt",
+        "Tool timeout remains terminal and non-success",
+        "Forged evidence declaration is rejected before proof authority",
     )
     name = "monster-fault-injection"
     suite = "09 FAULT / FAIL-CLOSED"
 
     def run(self, runtime, database, context) -> CaseResult:
-        del database, context
+        del database
         malformed = runtime.request(
             "POST",
             "/v1/chat/completions",
@@ -416,14 +416,66 @@ class FaultInjectionCase:
                 "provider_id": "caller-controlled-provider",
             },
         )
+        provider_timeout = runtime.exercise_fault_boundary(
+            "provider_timeout", marker=f"{context.marker}-provider-timeout"
+        )
+        tool_timeout = runtime.exercise_fault_boundary(
+            "tool_timeout", marker=f"{context.marker}-tool-timeout"
+        )
+        forged_evidence = runtime.exercise_fault_boundary(
+            "forged_evidence", marker=f"{context.marker}-forged-evidence"
+        )
         checks = [
             _check("Malformed runtime request fails closed", malformed.status_code == 422, 422, malformed.status_code),
             _check("Caller cannot override provider binding", forbidden_provider.status_code == 400, 400, forbidden_provider.status_code),
-            _check("Provider failure injection flight control is commissioned", False, "real provider failure injected and bounded receipt observed", "TEST REQUIRED: no runtime fault-injection control exposed"),
-            _check("Tool timeout injection flight control is commissioned", False, "tool timeout injected and bounded receipt observed", "TEST REQUIRED: no runtime fault-injection control exposed"),
-            _check("Evidence failure injection flight control is commissioned", False, "evidence failure injected and release blocked", "TEST REQUIRED: no runtime fault-injection control exposed"),
+            _check(
+                "Provider backend timeout becomes a bounded FAILED receipt",
+                provider_timeout.get("bounded") is True
+                and provider_timeout.get("receipt_status") == "failed"
+                and provider_timeout.get("error_type") == "TimeoutError"
+                and provider_timeout.get("restored") is True,
+                {
+                    "receipt_status": "failed",
+                    "error_type": "TimeoutError",
+                    "restored": True,
+                },
+                provider_timeout,
+            ),
+            _check(
+                "Tool timeout remains terminal and non-success",
+                tool_timeout.get("bounded") is True
+                and tool_timeout.get("receipt_status") == "degraded"
+                and tool_timeout.get("terminal_status") == "TIMED_OUT"
+                and tool_timeout.get("restored") is True,
+                {
+                    "receipt_status": "degraded",
+                    "terminal_status": "TIMED_OUT",
+                    "restored": True,
+                },
+                tool_timeout,
+            ),
+            _check(
+                "Forged evidence declaration is rejected before proof authority",
+                forged_evidence.get("bounded") is True
+                and forged_evidence.get("receipt_status") == "rejected"
+                and forged_evidence.get("reason") == "declared_tool_status_not_evidence",
+                {
+                    "receipt_status": "rejected",
+                    "reason": "declared_tool_status_not_evidence",
+                },
+                forged_evidence,
+            ),
         ]
-        return CaseResult(checks=checks, evidence={"malformed": _payload(malformed), "forbidden_provider": _payload(forbidden_provider)})
+        return CaseResult(
+            checks=checks,
+            evidence={
+                "malformed": _payload(malformed),
+                "forbidden_provider": _payload(forbidden_provider),
+                "provider_timeout": provider_timeout,
+                "tool_timeout": tool_timeout,
+                "forged_evidence": forged_evidence,
+            },
+        )
 
 
 class ReceiptCoverageGateCase:
