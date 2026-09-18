@@ -97,6 +97,8 @@ class RigRunner:
         self.started_at = datetime.now(timezone.utc)
         self._started_clock = time.perf_counter()
         self._executed_acceptance_checks = 0
+        self._planned_cases: tuple[tuple[str, str], ...] = ()
+        self._executed_cases: set[tuple[str, str]] = set()
         self._result_code = "PASS"
 
     def _record(
@@ -256,6 +258,8 @@ class RigRunner:
         if not cases:
             self._result_code = "NO_EXECUTED_ACCEPTANCE_CHECKS"
             return
+
+        self._planned_cases = tuple((case.suite, case.name) for case in cases)
 
         evidence_names: dict[str, str] = {}
         for case in cases:
@@ -460,6 +464,7 @@ class RigRunner:
             self.console.suite(suite_index, total_suites, suite)
             suite_index += 1
             for case in (item for item in cases if item.suite == suite):
+                self._executed_cases.add((case.suite, case.name))
                 try:
                     with self.tracer.span(
                         "case.execution", suite=case.suite, case=case.name
@@ -531,6 +536,43 @@ class RigRunner:
                 evidence_path=error_path,
             )
 
+
+    def _not_run_count(self) -> int:
+        """Count planned campaign stages that were never reached.
+
+        NOT RUN is intentionally separate from FAIL and SKIP. A failed stage
+        remains a failure; later planned stages that never began are counted
+        here instead of being mislabeled as failures or skips.
+        """
+
+        if self.options.cleanup_manifest_only:
+            return 0
+
+        preflight_plan = (
+            "Database adapter connection verified",
+            "Database integrity check passed",
+            "Database backup created and verified before writes",
+            "Runtime adapter initialized",
+            "Direct readiness probe passed",
+        )
+        observed_preflight = {
+            check.name
+            for check in self.ledger.checks
+            if check.suite == "PREFLIGHT"
+        }
+        not_run = sum(name not in observed_preflight for name in preflight_plan)
+        not_run += sum(
+            case_key not in self._executed_cases
+            for case_key in self._planned_cases
+        )
+        protected_state_observed = any(
+            check.suite == "PROTECTED STATE"
+            for check in self.ledger.checks
+        )
+        if self._planned_cases and not protected_state_observed:
+            not_run += 1
+        return int(not_run)
+
     def _acceptance_result(self) -> tuple[str, str]:
         if self.options.cleanup_manifest_only and not self.ledger.failed:
             return "PASS", "PASS"
@@ -549,6 +591,7 @@ class RigRunner:
         self.evidence.write_json("cleanup_manifest.json", self.cleanup.as_dict())
         self.evidence.ensure_required_files()
         summary = self.ledger.summary()
+        summary["not_run"] = self._not_run_count()
         acceptance_status, result_code = self._acceptance_result()
         completed_at = datetime.now(timezone.utc)
         run_payload = {
@@ -628,6 +671,7 @@ class RigRunner:
         except Exception:
             pass
         summary = self.ledger.summary()
+        summary["not_run"] = self._not_run_count()
         try:
             self.evidence.write_json(
                 "run.json",
