@@ -110,7 +110,12 @@ class KernelizedMonsterRuntimeAdapter:
     def __init__(self, config: RigConfig) -> None:
         self.config = config
         self.production_checkout = Path(os.environ["NEXUS_RIG_PRODUCTION_CHECKOUT"]).resolve()
-        self.v5_checkout = Path(os.environ["NEXUS_RIG_V5_CHECKOUT"]).resolve()
+        raw_v5_checkout = os.environ.get("NEXUS_RIG_V5_CHECKOUT", "").strip()
+        self.v5_checkout = (
+            None
+            if not raw_v5_checkout or raw_v5_checkout.upper() == "STAGED"
+            else Path(raw_v5_checkout).resolve()
+        )
         self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
         self.artifact_path = Path(
             os.environ.get("NEXUS_RIG_ARTIFACT_PATH", str(config.evidence_dir / "nexus-artifacts"))
@@ -138,12 +143,15 @@ class KernelizedMonsterRuntimeAdapter:
         self._turns: list[dict[str, Any]] = []
 
     def _configure_v5_environment(self) -> None:
-        migrations = self.v5_checkout / "migrations"
-        if not migrations.is_dir():
-            raise FileNotFoundError(f"V5 migrations directory not found: {migrations}")
         self.artifact_path.mkdir(parents=True, exist_ok=True)
         os.environ["NEXUS_DB_PATH"] = str(self.config.database_path)
-        os.environ["NEXUS_MIGRATIONS_PATH"] = str(migrations)
+        if self.v5_checkout is not None:
+            migrations = self.v5_checkout / "migrations"
+            if not migrations.is_dir():
+                raise FileNotFoundError(f"V5 migrations directory not found: {migrations}")
+            os.environ["NEXUS_MIGRATIONS_PATH"] = str(migrations)
+        else:
+            os.environ.pop("NEXUS_MIGRATIONS_PATH", None)
         os.environ["NEXUS_ARTIFACT_PATH"] = str(self.artifact_path)
         os.environ["NEXUS_RUNTIME_PROFILE"] = self.runtime_profile
         os.environ["NEXUS_PROVIDER_KIND"] = self.provider_kind
@@ -179,12 +187,12 @@ class KernelizedMonsterRuntimeAdapter:
     def start(self) -> None:
         if self._assembled is not None:
             raise RuntimeError("monster runtime adapter already started")
-        for path, label in (
-            (self.production_checkout, "production donor source"),
-            (self.v5_checkout, "V5 assembly source"),
-        ):
-            if not path.is_dir():
-                raise FileNotFoundError(f"{label} not found: {path}")
+        if not self.production_checkout.is_dir():
+            raise FileNotFoundError(
+                f"production donor source not found: {self.production_checkout}"
+            )
+        if self.v5_checkout is not None and not self.v5_checkout.is_dir():
+            raise FileNotFoundError(f"V5 assembly source not found: {self.v5_checkout}")
         if not self.legacy_db.is_file():
             raise FileNotFoundError(f"legacy fixture database not found: {self.legacy_db}")
 
