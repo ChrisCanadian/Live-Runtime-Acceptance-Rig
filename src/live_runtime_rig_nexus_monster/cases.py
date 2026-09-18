@@ -86,7 +86,7 @@ class FlightControlInventoryCase:
             _check("Resolved model identity is reported for the real provider", bool(str(health.get("model_id") or "").strip()), "non-empty model_id", health.get("model_id")),
             _check(
                 "Real provider completes an external inference preflight",
-                (health.get("provider_probe") or {}).get("status") == "OK"
+                (health.get("provider_probe") or {}).get("status") == "ok"
                 and bool((health.get("provider_probe") or {}).get("provider_id"))
                 and bool((health.get("provider_probe") or {}).get("model_id"))
                 and int((health.get("provider_probe") or {}).get("response_chars") or 0) > 0,
