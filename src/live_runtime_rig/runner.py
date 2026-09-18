@@ -98,6 +98,7 @@ class RigRunner:
         self._started_clock = time.perf_counter()
         self._executed_acceptance_checks = 0
         self._planned_cases: tuple[tuple[str, str], ...] = ()
+        self._planned_check_keys: tuple[tuple[str, str], ...] = ()
         self._executed_cases: set[tuple[str, str]] = set()
         self._result_code = "PASS"
 
@@ -260,6 +261,17 @@ class RigRunner:
             return
 
         self._planned_cases = tuple((case.suite, case.name) for case in cases)
+        planned_check_keys: list[tuple[str, str]] = []
+        for case in cases:
+            declared = tuple(getattr(case, "planned_checks", ()) or ())
+            if declared:
+                planned_check_keys.extend((case.suite, str(name)) for name in declared)
+            else:
+                # Generic/application-neutral cases may not expose check-level
+                # planning metadata. Preserve backward compatibility by treating
+                # the case itself as one planned acceptance unit.
+                planned_check_keys.append((case.suite, case.name))
+        self._planned_check_keys = tuple(planned_check_keys)
 
         evidence_names: dict[str, str] = {}
         for case in cases:
@@ -537,16 +549,19 @@ class RigRunner:
             )
 
 
-    def _not_run_count(self) -> int:
-        """Count planned campaign stages that were never reached.
+    def _not_run_checks(self) -> list[dict[str, str]]:
+        """Return individual planned checks that were never reached.
 
-        NOT RUN is intentionally separate from FAIL and SKIP. A failed stage
-        remains a failure; later planned stages that never began are counted
-        here instead of being mislabeled as failures or skips.
+        NOT RUN is a third axis, separate from FAIL and SKIP. A failed check was
+        executed and therefore is not NOT RUN. A skipped check was explicitly
+        evaluated as SKIP and therefore is also not NOT RUN.
         """
 
         if self.options.cleanup_manifest_only:
-            return 0
+            return []
+
+        observed = {(check.suite, check.name) for check in self.ledger.checks}
+        not_run: list[dict[str, str]] = []
 
         preflight_plan = (
             "Database adapter connection verified",
@@ -555,23 +570,29 @@ class RigRunner:
             "Runtime adapter initialized",
             "Direct readiness probe passed",
         )
-        observed_preflight = {
-            check.name
-            for check in self.ledger.checks
-            if check.suite == "PREFLIGHT"
-        }
-        not_run = sum(name not in observed_preflight for name in preflight_plan)
-        not_run += sum(
-            case_key not in self._executed_cases
-            for case_key in self._planned_cases
-        )
-        protected_state_observed = any(
-            check.suite == "PROTECTED STATE"
-            for check in self.ledger.checks
-        )
-        if self._planned_cases and not protected_state_observed:
-            not_run += 1
-        return int(not_run)
+        for name in preflight_plan:
+            key = ("PREFLIGHT", name)
+            if key not in observed:
+                not_run.append({"kind": "preflight", "suite": key[0], "name": key[1]})
+
+        for suite, name in self._planned_check_keys:
+            if (suite, name) not in observed:
+                not_run.append({"kind": "acceptance_check", "suite": suite, "name": name})
+
+        protected_key = ("PROTECTED STATE", "Protected state remained unchanged")
+        protected_fallback = ("PROTECTED STATE", "Protected state comparison completed")
+        if self._planned_cases and protected_key not in observed and protected_fallback not in observed:
+            not_run.append(
+                {
+                    "kind": "postflight",
+                    "suite": "PROTECTED STATE",
+                    "name": "Protected state remained unchanged",
+                }
+            )
+        return not_run
+
+    def _not_run_count(self) -> int:
+        return len(self._not_run_checks())
 
     def _acceptance_result(self) -> tuple[str, str]:
         if self.options.cleanup_manifest_only and not self.ledger.failed:
@@ -606,6 +627,7 @@ class RigRunner:
             "public_safe": self.public_safe,
             "application_label": self.config.application_label,
             "summary": summary,
+            "not_run_checks": self._not_run_checks(),
             "checks": [check.as_dict() for check in self.ledger.checks],
             "cleanup_manifest": "cleanup_manifest.json",
         }
@@ -682,6 +704,7 @@ class RigRunner:
                     "result_code": "FINALIZATION_ERROR",
                     "executed_acceptance_checks": self._executed_acceptance_checks,
                     "summary": summary,
+                    "not_run_checks": self._not_run_checks(),
                     "checks": [check.as_dict() for check in self.ledger.checks],
                     "cleanup_manifest": "cleanup_manifest.json",
                 },
