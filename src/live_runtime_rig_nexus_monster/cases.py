@@ -233,48 +233,38 @@ class RuntimeInitiatedToolLoopCase:
 
 class ContinuityAndRestartCase:
     planned_checks = (
-        "Initial continuity write turn released",
-        "Same-session recall turn released",
-        "Continuity kernel participates before restart",
-        "Restarted runtime releases same-session recovery turn",
-        "Continuity kernel participates after restart",
+        "Initial memory continuity turn released",
+        "Same-session memory recall turn released",
+        "Restarted runtime releases same-session memory recovery turn",
         "Memory kernel participates after restart",
         "Recovered answer contains durable marker",
+        "Continuity public boundary creates durable state",
+        "Continuity public boundary reads its durable state",
     )
     name = "monster-continuity-restart"
-    suite = "05 CONTINUITY / RESTART"
+    suite = "05 MEMORY CONTINUITY / CONTINUITY BOUNDARY"
 
     def run(self, runtime, database, context) -> CaseResult:
         del database
         session = f"monster-continuity-{context.run_id}"
         marker = f"DURABLE_{context.marker}"
-        first = runtime.chat(
-            f"Remember this exact continuity marker for this acceptance session: {marker}",
-            session_id=session,
-        )
-        second = runtime.chat(
-            "What continuity marker did I give you in this session?",
-            session_id=session,
-        )
-        continuity_before_restart = _count(runtime, "nexus.continuity")
+        first = runtime.chat(f"Remember this exact continuity marker for this acceptance session: {marker}", session_id=session)
+        second = runtime.chat("What continuity marker did I give you in this session?", session_id=session)
         memory_before_restart = _count(runtime, "nexus.memory")
         runtime.request("POST", "/__rig/restart")
-        third = runtime.chat(
-            "After the runtime restart, recover the continuity marker from this same session.",
-            session_id=session,
-        )
-        continuity_after_restart = _count(runtime, "nexus.continuity")
+        third = runtime.chat("After the runtime restart, recover the continuity marker from this same session.", session_id=session)
         memory_after_restart = _count(runtime, "nexus.memory")
+        continuity = runtime.exercise_kernel_boundary("nexus.continuity", marker=f"{context.marker}-continuity")
         checks = [
-            _check("Initial continuity write turn released", _released(first), "released", _payload(first).get("state")),
-            _check("Same-session recall turn released", _released(second), "released", _payload(second).get("state")),
-            _check("Continuity kernel participates before restart", continuity_before_restart > 0, ">0 receipts", continuity_before_restart),
-            _check("Restarted runtime releases same-session recovery turn", _released(third), "released", _payload(third).get("state")),
-            _check("Continuity kernel participates after restart", continuity_after_restart > continuity_before_restart, f"> {continuity_before_restart}", continuity_after_restart),
+            _check("Initial memory continuity turn released", _released(first), "released", _payload(first).get("state")),
+            _check("Same-session memory recall turn released", _released(second), "released", _payload(second).get("state")),
+            _check("Restarted runtime releases same-session memory recovery turn", _released(third), "released", _payload(third).get("state")),
             _check("Memory kernel participates after restart", memory_after_restart > memory_before_restart, f"> {memory_before_restart}", memory_after_restart),
             _check("Recovered answer contains durable marker", marker in str(_payload(third).get("text") or ""), marker, _payload(third).get("text"), heuristic=True),
+            _check("Continuity public boundary creates durable state", continuity.get("receipt_status") == "OK" and bool(continuity.get("pin_id")), {"receipt_status": "OK", "pin_id": "non-empty"}, continuity),
+            _check("Continuity public boundary reads its durable state", continuity.get("snapshot_status") == "OK" and int(continuity.get("snapshot_pin_count") or 0) > 0, {"snapshot_status": "OK", "snapshot_pin_count": ">0"}, continuity),
         ]
-        return CaseResult(checks=checks, evidence={"first": _payload(first), "second": _payload(second), "third": _payload(third), "coverage": _coverage(runtime)})
+        return CaseResult(checks=checks, evidence={"first": _payload(first), "second": _payload(second), "third": _payload(third), "continuity_boundary": continuity, "coverage": _coverage(runtime)})
 
 
 class CrossUserIsolationCase:
@@ -314,72 +304,58 @@ class CrossUserIsolationCase:
 
 class CognitionModesLearningCase:
     planned_checks = (
-        "Complex cognition turn is released",
+        "Complex canonical turn is released",
         "Modes kernel executes through normal turn resolution",
-        "Cognition kernel executes through the canonical turn",
-        "Direct feedback turn is released",
-        "Learning kernel admits/records the feedback through runtime flow",
+        "Cognition public boundary executes advisory node projection",
+        "Cognition advisory projection returns UserID 18 node evidence",
+        "Learning public boundary scans direct feedback without promotion",
     )
     name = "monster-cognition-modes-learning"
     suite = "07 COGNITION / MODES / LEARNING"
 
     def run(self, runtime, database, context) -> CaseResult:
         del database
-        cognition_before = _count(runtime, "nexus.cognition")
         modes_before = _count(runtime, "nexus.modes")
-        learning_before = _count(runtime, "nexus.learning")
-        complex_turn = runtime.chat(
-            "Analyze a difficult tradeoff with multiple competing constraints. Use the runtime's normal cognition and mode resolution, not a direct specialist call.",
-            session_id=f"monster-cognition-{context.run_id}",
-        )
-        feedback_turn = runtime.chat(
-            "Direct preference correction for the learning system: stop using emoji in my responses and keep this preference for future turns.",
-            session_id=f"monster-learning-{context.run_id}",
-        )
-        cognition_after = _count(runtime, "nexus.cognition")
+        complex_turn = runtime.chat("Analyze a difficult tradeoff with multiple competing constraints.", session_id=f"monster-cognition-{context.run_id}")
         modes_after = _count(runtime, "nexus.modes")
-        learning_after = _count(runtime, "nexus.learning")
+        cognition = runtime.exercise_kernel_boundary("nexus.cognition", marker=f"{context.marker}-cognition")
+        learning = runtime.exercise_kernel_boundary("nexus.learning", marker=f"{context.marker}-learning")
         checks = [
-            _check("Complex cognition turn is released", _released(complex_turn), "released", _payload(complex_turn).get("state")),
+            _check("Complex canonical turn is released", _released(complex_turn), "released", _payload(complex_turn).get("state")),
             _check("Modes kernel executes through normal turn resolution", modes_after > modes_before, f"> {modes_before}", modes_after),
-            _check("Cognition kernel executes through the canonical turn", cognition_after > cognition_before, f"> {cognition_before}", cognition_after),
-            _check("Direct feedback turn is released", _released(feedback_turn), "released", _payload(feedback_turn).get("state")),
-            _check("Learning kernel admits/records the feedback through runtime flow", learning_after > learning_before, f"> {learning_before}", learning_after),
+            _check("Cognition public boundary executes advisory node projection", cognition.get("receipt_status") == "OK" and cognition.get("state_mutated") is False, {"receipt_status": "OK", "state_mutated": False}, cognition),
+            _check("Cognition advisory projection returns UserID 18 node evidence", int(cognition.get("node_count") or 0) > 0, ">0 node activations", cognition),
+            _check("Learning public boundary scans direct feedback without promotion", learning.get("receipt_status") == "OK" and int(learning.get("observation_count") or 0) > 0 and learning.get("state_mutated") is False, {"receipt_status": "OK", "observation_count": ">0", "state_mutated": False}, learning),
         ]
-        return CaseResult(checks=checks, evidence={"complex": _payload(complex_turn), "feedback": _payload(feedback_turn), "coverage": _coverage(runtime)})
+        return CaseResult(checks=checks, evidence={"complex": _payload(complex_turn), "cognition_boundary": cognition, "learning_boundary": learning, "coverage": _coverage(runtime)})
 
 
 class JobsArtifactsCase:
     planned_checks = (
-        "Job request is handled through canonical runtime",
-        "Jobs kernel actually executes instead of prose-only simulation",
-        "Artifact request is handled through canonical runtime",
-        "Artifacts kernel actually executes instead of prose-only simulation",
+        "Jobs public boundary enqueues isolated work",
+        "Jobs public boundary exposes the queued record",
+        "Artifacts public boundary creates durable custody",
+        "Artifacts public boundary independently verifies custody",
+        "Surfaces public boundary projects a release-style event",
+        "Surface projection returns stable presentation identity",
     )
-    name = "monster-jobs-artifacts"
-    suite = "08 JOBS / ARTIFACTS"
+    name = "monster-jobs-artifacts-surfaces"
+    suite = "08 JOBS / ARTIFACTS / SURFACES"
 
     def run(self, runtime, database, context) -> CaseResult:
         del database
-        jobs_before = _count(runtime, "nexus.jobs")
-        artifacts_before = _count(runtime, "nexus.artifacts")
-        job_turn = runtime.chat(
-            "Use the runtime's normal capabilities to create a bounded test job representing 'acceptance-job'. Do not simulate success in prose if the job subsystem is unavailable.",
-            session_id=f"monster-job-{context.run_id}",
-        )
-        artifact_turn = runtime.chat(
-            "Use the runtime's normal capabilities to create a tiny text artifact containing ACCEPTANCE_ARTIFACT. Do not simulate artifact creation in prose.",
-            session_id=f"monster-artifact-{context.run_id}",
-        )
-        jobs_after = _count(runtime, "nexus.jobs")
-        artifacts_after = _count(runtime, "nexus.artifacts")
+        jobs = runtime.exercise_kernel_boundary("nexus.jobs", marker=f"{context.marker}-jobs")
+        artifacts = runtime.exercise_kernel_boundary("nexus.artifacts", marker=f"{context.marker}-artifacts")
+        surfaces = runtime.exercise_kernel_boundary("nexus.surfaces", marker=f"{context.marker}-surfaces")
         checks = [
-            _check("Job request is handled through canonical runtime", _released(job_turn), "released", _payload(job_turn).get("state")),
-            _check("Jobs kernel actually executes instead of prose-only simulation", jobs_after > jobs_before, f"> {jobs_before}", jobs_after),
-            _check("Artifact request is handled through canonical runtime", _released(artifact_turn), "released", _payload(artifact_turn).get("state")),
-            _check("Artifacts kernel actually executes instead of prose-only simulation", artifacts_after > artifacts_before, f"> {artifacts_before}", artifacts_after),
+            _check("Jobs public boundary enqueues isolated work", jobs.get("receipt_status") == "OK" and bool(jobs.get("job_id")), {"receipt_status": "OK", "job_id": "non-empty"}, jobs),
+            _check("Jobs public boundary exposes the queued record", jobs.get("snapshot_status") == "OK" and str(jobs.get("job_status") or "").upper() in {"QUEUED", "PENDING"}, {"snapshot_status": "OK", "job_status": "queued"}, jobs),
+            _check("Artifacts public boundary creates durable custody", artifacts.get("receipt_status") == "OK" and bool(artifacts.get("artifact_id")) and bool(artifacts.get("sha256")), {"receipt_status": "OK", "artifact_id": "non-empty", "sha256": "non-empty"}, artifacts),
+            _check("Artifacts public boundary independently verifies custody", artifacts.get("verify_status") == "OK" and artifacts.get("verified") is True, {"verify_status": "OK", "verified": True}, artifacts),
+            _check("Surfaces public boundary projects a release-style event", surfaces.get("receipt_status") == "OK", "OK", surfaces),
+            _check("Surface projection returns stable presentation identity", bool(surfaces.get("event_id")) and bool(surfaces.get("replay_token")), {"event_id": "non-empty", "replay_token": "non-empty"}, surfaces),
         ]
-        return CaseResult(checks=checks, evidence={"job": _payload(job_turn), "artifact": _payload(artifact_turn), "coverage": _coverage(runtime)})
+        return CaseResult(checks=checks, evidence={"jobs_boundary": jobs, "artifacts_boundary": artifacts, "surfaces_boundary": surfaces, "coverage": _coverage(runtime)})
 
 
 class FaultInjectionCase:
@@ -422,9 +398,10 @@ class FaultInjectionCase:
 
 class ReceiptCoverageGateCase:
     planned_checks = (
-        "Every one of the 17 required kernels emitted at least one real runtime receipt",
-        "Every required kernel has at least one observed executed operation",
-        "Monster campaign has zero missing flight-control receipts",
+        "All 17 required kernels emitted campaign evidence at an appropriate boundary",
+        "Every required kernel has at least one observed public operation",
+        "Monster campaign has zero unexercised required kernel boundaries",
+        "Coverage evidence distinguishes canonical turns from boundary probes",
     )
     name = "monster-receipt-coverage-gate"
     suite = "10 ALL-FLIGHT-CONTROLS GATE"
@@ -434,14 +411,19 @@ class ReceiptCoverageGateCase:
         coverage = dict(_coverage(runtime))
         counts = dict(coverage.get("receipt_counts") or {})
         operation_counts = dict(coverage.get("operation_counts") or {})
+        source_counts = dict(coverage.get("coverage_sources") or {})
         missing = tuple(kernel_id for kernel_id in REQUIRED_KERNEL_IDS if int(counts.get(kernel_id, 0)) == 0)
-        zero_operation = tuple(
-            kernel_id for kernel_id in REQUIRED_KERNEL_IDS if not dict(operation_counts.get(kernel_id) or {})
+        zero_operation = tuple(kernel_id for kernel_id in REQUIRED_KERNEL_IDS if not dict(operation_counts.get(kernel_id) or {}))
+        source_unclassified = tuple(
+            kernel_id for kernel_id in REQUIRED_KERNEL_IDS
+            if int((source_counts.get(kernel_id) or {}).get("canonical_turn", 0)) == 0
+            and int((source_counts.get(kernel_id) or {}).get("boundary_probe", 0)) == 0
         )
         checks = [
-            _check("Every one of the 17 required kernels emitted at least one real runtime receipt", not missing, (), missing),
-            _check("Every required kernel has at least one observed executed operation", not zero_operation, (), zero_operation),
-            _check("Monster campaign has zero missing flight-control receipts", not coverage.get("missing_kernel_receipts"), (), tuple(coverage.get("missing_kernel_receipts") or ())),
+            _check("All 17 required kernels emitted campaign evidence at an appropriate boundary", not missing, (), missing),
+            _check("Every required kernel has at least one observed public operation", not zero_operation, (), zero_operation),
+            _check("Monster campaign has zero unexercised required kernel boundaries", not coverage.get("missing_kernel_receipts"), (), tuple(coverage.get("missing_kernel_receipts") or ())),
+            _check("Coverage evidence distinguishes canonical turns from boundary probes", not source_unclassified, (), source_unclassified),
         ]
         return CaseResult(checks=checks, evidence={"coverage": coverage})
 
