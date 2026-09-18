@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    PYTHONPATH=/rig/src:/ndka/src
+    PYTHONPATH=/rig/src:/ndka/src:/v5/src
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -21,6 +21,7 @@ RUN python -m pip install \
 # present bind-mounted repositories with ownership that differs from the
 # container user, so trust only the two fixed donor locations used by the rig.
 RUN git config --system --add safe.directory /production \
+    && git config --system --add safe.directory /v5 \
     && git config --system --add safe.directory /ndka \
     && git config --system --add safe.directory /rig
 
