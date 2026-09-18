@@ -179,7 +179,7 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $ShortNdka = $NDKA_SHA.Substring(0, 7)
 $ShortV5 = $V5_SHA.Substring(0, 7)
 $ImageTag = "nexus-kernelized-fixture-local:$ShortNdka-$ShortV5"
-$Dockerfile = Join-Path $RigRoot "containers\Dockerfile.local-kernelized-fixture"
+$Dockerfile = Join-Path $RigRoot "containers\Dockerfile.ndka-full-monster-real"
 
 Write-Host ""
 Write-Host "Building/reusing Linux dependency-parity image ..." -ForegroundColor Cyan
