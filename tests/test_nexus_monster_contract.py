@@ -161,15 +161,25 @@ def test_monster_requires_full_local_nlp_and_forbids_lightweight_defaults():
     assert '"source": "production_full_nlp_local"' in adapter
     assert '"static_defaults": False' in adapter
     assert '"hf_inference_api_used": False' in adapter
-    assert "Assert-LocalProductionNlpConfiguration" in launcher
+    assert "Write-LocalProductionNlpRequirement" in launcher
+    assert "Assert-LocalProductionNlpConfiguration" not in launcher
+    assert "NLP analyzer: VERIFIED" not in launcher
+    assert "Linux NLP image: VERIFIED" in launcher
+    assert launcher.index("Building/reusing Linux dependency-parity image") < launcher.index("Linux NLP image: VERIFIED")
     assert '"-e", "NLP_ENABLED=true"' in launcher
     assert '"-e", "NLP_ZERO_SHOT_API=local"' in launcher
     assert '"-e", "NLP_EMOTION_API=local"' in launcher
     assert '"-e", "HF_HUB_OFFLINE=1"' in launcher
     assert '"-e", "TRANSFORMERS_OFFLINE=1"' in launcher
     assert '"-e", "HF_API_TOKEN"' not in launcher
+    assert 'sentence-transformers==6.0.1' in dockerfile
+    assert 'python -m pip check' in dockerfile
     assert 'snapshot_download(repo_id="facebook/bart-large-mnli")' in dockerfile
     assert 'snapshot_download(repo_id="j-hartmann/emotion-english-distilroberta-base")' in dockerfile
+    assert 'snapshot_download(repo_id="sentence-transformers/all-MiniLM-L6-v2")' in dockerfile
+    assert 'HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python' in dockerfile
+    assert 'SentenceTransformer("all-MiniLM-L6-v2", device="cpu")' in dockerfile
+    assert 'MONSTER_NLP_IMAGE_PREFLIGHT=VERIFIED' in dockerfile
     assert 'stanza.download(' in dockerfile
 
 
