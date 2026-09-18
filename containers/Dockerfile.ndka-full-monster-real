@@ -19,6 +19,13 @@ RUN python -m pip install \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       -r /opt/nexus/v2-runtime-requirements.lock
 
+# The staged V2/V5 lock intentionally does not carry SentenceTransformers, but
+# production's full local NLP path imports it through LabelLearningEngine and
+# ProductionNLPPipeline. Use the current v5-compatible SentenceTransformers
+# release so we preserve the lock's transformers>=5 / huggingface-hub>=1 stack
+# instead of silently downgrading the shared runtime environment.
+RUN python -m pip install "sentence-transformers==6.0.1" \
+    && python -m pip check
 
 # The local Monster exercises the actual production NLP pipeline, not the
 # low-memory VM's static/lightweight fallback. Bake the immutable model assets
@@ -36,6 +43,37 @@ stanza.download(
 )
 snapshot_download(repo_id="facebook/bart-large-mnli")
 snapshot_download(repo_id="j-hartmann/emotion-english-distilroberta-base")
+snapshot_download(repo_id="sentence-transformers/all-MiniLM-L6-v2")
+PY
+
+# Prove the baked Linux image can resolve the complete production NLP model
+# closure with networking disabled at runtime. A successful Docker build is
+# therefore evidence about the actual Linux image, not merely the Windows host.
+RUN HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python - <<'PY'
+import stanza
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+stanza.Pipeline(
+    "en",
+    processors="tokenize,pos,lemma",
+    download_method=None,
+    verbose=False,
+)
+pipeline(
+    "zero-shot-classification",
+    model="facebook/bart-large-mnli",
+    device=-1,
+)
+pipeline(
+    "text-classification",
+    model="j-hartmann/emotion-english-distilroberta-base",
+    device=-1,
+)
+SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+SentimentIntensityAnalyzer()
+print("MONSTER_NLP_IMAGE_PREFLIGHT=VERIFIED")
 PY
 
 # Local fixture runs mount exact Git checkouts at these paths. Docker Desktop can
