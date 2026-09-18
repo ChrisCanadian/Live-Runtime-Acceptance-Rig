@@ -24,6 +24,10 @@ def _check(name: str, condition: bool, expected: Any, observed: Any, *, heuristi
     )
 
 
+def _status_ok(value: Any) -> bool:
+    return str(value or "").strip().casefold() == "ok"
+
+
 def _payload(response: Any) -> Mapping[str, Any]:
     try:
         value = response.json()
@@ -57,6 +61,8 @@ class FlightControlInventoryCase:
         "Monster runtime is using a REAL provider, not the deterministic fixture",
         "Resolved model identity is reported for the real provider",
         "Real provider completes an external inference preflight",
+        "Production AnalysisManager performs live NLP classification",
+        "Production NLP returns non-static intent evidence",
         "Production RAG retriever initializes against isolated Chroma state",
         "RAG embedding endpoint returns a real vector",
         "Production RAG returns UserID 18 semantic memory candidates",
@@ -93,6 +99,28 @@ class FlightControlInventoryCase:
                 and int((health.get("provider_probe") or {}).get("response_chars") or 0) > 0,
                 "real external inference returns OK + provider/model + text",
                 health.get("provider_probe"),
+            ),
+            _check(
+                "Production AnalysisManager performs live NLP classification",
+                _status_ok((health.get("analysis_probe") or {}).get("status"))
+                and (health.get("analysis_probe") or {}).get("source") == "hf_api_lightweight"
+                and (health.get("analysis_probe") or {}).get("static_defaults") is False,
+                {
+                    "status": "ok",
+                    "source": "hf_api_lightweight",
+                    "static_defaults": False,
+                },
+                health.get("analysis_probe"),
+            ),
+            _check(
+                "Production NLP returns non-static intent evidence",
+                int((health.get("analysis_probe") or {}).get("intent_label_count") or 0) > 0
+                and float((health.get("analysis_probe") or {}).get("intent_score_spread") or 0.0) > 0.0,
+                {
+                    "intent_label_count": ">0",
+                    "intent_score_spread": ">0",
+                },
+                health.get("analysis_probe"),
             ),
             _check(
                 "Production RAG retriever initializes against isolated Chroma state",
@@ -261,8 +289,8 @@ class ContinuityAndRestartCase:
             _check("Restarted runtime releases same-session memory recovery turn", _released(third), "released", _payload(third).get("state")),
             _check("Memory kernel participates after restart", memory_after_restart > memory_before_restart, f"> {memory_before_restart}", memory_after_restart),
             _check("Recovered answer contains durable marker", marker in str(_payload(third).get("text") or ""), marker, _payload(third).get("text"), heuristic=True),
-            _check("Continuity public boundary creates durable state", continuity.get("receipt_status") == "OK" and bool(continuity.get("pin_id")), {"receipt_status": "OK", "pin_id": "non-empty"}, continuity),
-            _check("Continuity public boundary reads its durable state", continuity.get("snapshot_status") == "OK" and int(continuity.get("snapshot_pin_count") or 0) > 0, {"snapshot_status": "OK", "snapshot_pin_count": ">0"}, continuity),
+            _check("Continuity public boundary creates durable state", _status_ok(continuity.get("receipt_status")) and bool(continuity.get("pin_id")), {"receipt_status": "ok", "pin_id": "non-empty"}, continuity),
+            _check("Continuity public boundary reads its durable state", _status_ok(continuity.get("snapshot_status")) and int(continuity.get("snapshot_pin_count") or 0) > 0, {"snapshot_status": "ok", "snapshot_pin_count": ">0"}, continuity),
         ]
         return CaseResult(checks=checks, evidence={"first": _payload(first), "second": _payload(second), "third": _payload(third), "continuity_boundary": continuity, "coverage": _coverage(runtime)})
 
@@ -323,9 +351,9 @@ class CognitionModesLearningCase:
         checks = [
             _check("Complex canonical turn is released", _released(complex_turn), "released", _payload(complex_turn).get("state")),
             _check("Modes kernel executes through normal turn resolution", modes_after > modes_before, f"> {modes_before}", modes_after),
-            _check("Cognition public boundary executes advisory node projection", cognition.get("receipt_status") == "OK" and cognition.get("state_mutated") is False, {"receipt_status": "OK", "state_mutated": False}, cognition),
+            _check("Cognition public boundary executes advisory node projection", _status_ok(cognition.get("receipt_status")) and cognition.get("state_mutated") is False, {"receipt_status": "ok", "state_mutated": False}, cognition),
             _check("Cognition advisory projection returns UserID 18 node evidence", int(cognition.get("node_count") or 0) > 0, ">0 node activations", cognition),
-            _check("Learning public boundary scans direct feedback without promotion", learning.get("receipt_status") == "OK" and int(learning.get("observation_count") or 0) > 0 and learning.get("state_mutated") is False, {"receipt_status": "OK", "observation_count": ">0", "state_mutated": False}, learning),
+            _check("Learning public boundary scans direct feedback without promotion", _status_ok(learning.get("receipt_status")) and int(learning.get("observation_count") or 0) > 0 and learning.get("state_mutated") is False, {"receipt_status": "ok", "observation_count": ">0", "state_mutated": False}, learning),
         ]
         return CaseResult(checks=checks, evidence={"complex": _payload(complex_turn), "cognition_boundary": cognition, "learning_boundary": learning, "coverage": _coverage(runtime)})
 
@@ -348,11 +376,11 @@ class JobsArtifactsCase:
         artifacts = runtime.exercise_kernel_boundary("nexus.artifacts", marker=f"{context.marker}-artifacts")
         surfaces = runtime.exercise_kernel_boundary("nexus.surfaces", marker=f"{context.marker}-surfaces")
         checks = [
-            _check("Jobs public boundary enqueues isolated work", jobs.get("receipt_status") == "OK" and bool(jobs.get("job_id")), {"receipt_status": "OK", "job_id": "non-empty"}, jobs),
-            _check("Jobs public boundary exposes the queued record", jobs.get("snapshot_status") == "OK" and str(jobs.get("job_status") or "").upper() in {"QUEUED", "PENDING"}, {"snapshot_status": "OK", "job_status": "queued"}, jobs),
-            _check("Artifacts public boundary creates durable custody", artifacts.get("receipt_status") == "OK" and bool(artifacts.get("artifact_id")) and bool(artifacts.get("sha256")), {"receipt_status": "OK", "artifact_id": "non-empty", "sha256": "non-empty"}, artifacts),
-            _check("Artifacts public boundary independently verifies custody", artifacts.get("verify_status") == "OK" and artifacts.get("verified") is True, {"verify_status": "OK", "verified": True}, artifacts),
-            _check("Surfaces public boundary projects a release-style event", surfaces.get("receipt_status") == "OK", "OK", surfaces),
+            _check("Jobs public boundary enqueues isolated work", _status_ok(jobs.get("receipt_status")) and bool(jobs.get("job_id")), {"receipt_status": "ok", "job_id": "non-empty"}, jobs),
+            _check("Jobs public boundary exposes the queued record", _status_ok(jobs.get("snapshot_status")) and str(jobs.get("job_status") or "").upper() in {"QUEUED", "PENDING"}, {"snapshot_status": "ok", "job_status": "queued"}, jobs),
+            _check("Artifacts public boundary creates durable custody", _status_ok(artifacts.get("receipt_status")) and bool(artifacts.get("artifact_id")) and bool(artifacts.get("sha256")), {"receipt_status": "ok", "artifact_id": "non-empty", "sha256": "non-empty"}, artifacts),
+            _check("Artifacts public boundary independently verifies custody", _status_ok(artifacts.get("verify_status")) and artifacts.get("verified") is True, {"verify_status": "ok", "verified": True}, artifacts),
+            _check("Surfaces public boundary projects a release-style event", _status_ok(surfaces.get("receipt_status")), "ok", surfaces),
             _check("Surface projection returns stable presentation identity", bool(surfaces.get("event_id")) and bool(surfaces.get("replay_token")), {"event_id": "non-empty", "replay_token": "non-empty"}, surfaces),
         ]
         return CaseResult(checks=checks, evidence={"jobs_boundary": jobs, "artifacts_boundary": artifacts, "surfaces_boundary": surfaces, "coverage": _coverage(runtime)})
