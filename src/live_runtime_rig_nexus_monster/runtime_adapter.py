@@ -122,6 +122,10 @@ class KernelizedMonsterRuntimeAdapter:
         ).resolve()
         self.runtime_profile = os.environ.get("NEXUS_RIG_RUNTIME_PROFILE", "development_fixture")
         self.provider_kind = os.environ.get("NEXUS_RIG_PROVIDER_KIND", "fake")
+        if self.provider_kind == "fake":
+            raise RuntimeError(
+                "REAL_PROVIDER_REQUIRED: the real-LLM Monster lane forbids the deterministic fake provider"
+            )
         self.primary_user_id = int(os.environ.get("NEXUS_RIG_PRIMARY_USER_ID", "18"))
         self.secondary_user_id = int(os.environ.get("NEXUS_RIG_SECONDARY_USER_ID", "19"))
         self.primary_owner_key = os.environ.get("NEXUS_RIG_PRIMARY_OWNER_KEY", "fixture-owner-18")
@@ -233,6 +237,19 @@ class KernelizedMonsterRuntimeAdapter:
         app.include_router(
             build_fastapi_runtime_router(service, require_principal=require_principal)
         )
+        provider = getattr(assembled.v5_runtime, "provider", None)
+        provider_class = type(provider).__name__ if provider is not None else ""
+        provider_id = str(getattr(provider, "provider_id", "") or "")
+        model_id = str(getattr(provider, "model_id", "") or "")
+        if (
+            not provider_class
+            or "fake" in provider_class.casefold()
+            or "fake" in provider_id.casefold()
+            or "fake" in model_id.casefold()
+        ):
+            raise RuntimeError(
+                "REAL_PROVIDER_REQUIRED: assembled runtime resolved a fake provider"
+            )
         self._assembled = assembled
         self._app = app
         self._client = _InProcessASGIClient(app)
@@ -318,11 +335,24 @@ class KernelizedMonsterRuntimeAdapter:
         assembled, _ = self._require_started()
         readiness = asyncio.run(assembled.host.test_readiness())
         inventory = assembled.host.observability.inventory()
+        provider = getattr(assembled.v5_runtime, "provider", None)
         return {
             "ready_for_test": readiness.ready_for_test,
             **_inventory_payload(inventory),
             "degraded_kernel_ids": tuple(readiness.degraded_kernel_ids),
             "failed_kernel_ids": tuple(readiness.failed_kernel_ids),
+            "primary_user_id": self.primary_user_id,
+            "primary_owner_key": self.primary_owner_key,
+            "provider_kind": self.provider_kind,
+            "provider_class": type(provider).__name__ if provider is not None else None,
+            "provider_id": getattr(provider, "provider_id", None),
+            "model_id": getattr(provider, "model_id", None),
+            "real_provider": (
+                provider is not None
+                and "fake" not in type(provider).__name__.casefold()
+                and "fake" not in str(getattr(provider, "provider_id", "")).casefold()
+                and "fake" not in str(getattr(provider, "model_id", "")).casefold()
+            ),
         }
 
     def direct_readiness_probe(self) -> Mapping[str, Any]:
