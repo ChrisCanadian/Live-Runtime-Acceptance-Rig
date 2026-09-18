@@ -5,7 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    PYTHONPATH=/rig/src:/ndka/src:/v5/src
+    PYTHONPATH=/rig/src:/ndka/src:/v5/src \
+    HF_HOME=/opt/nexus/hf-cache \
+    STANZA_RESOURCES_DIR=/opt/nexus/stanza-resources
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -16,6 +18,25 @@ COPY --from=v5 /manifests/v2_runtime_requirements.lock /opt/nexus/v2-runtime-req
 RUN python -m pip install \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       -r /opt/nexus/v2-runtime-requirements.lock
+
+
+# The local Monster exercises the actual production NLP pipeline, not the
+# low-memory VM's static/lightweight fallback. Bake the immutable model assets
+# into the image so runtime classification is local/offline while APIFree.ai
+# remains the real response-model provider.
+RUN python - <<'PY'
+from huggingface_hub import snapshot_download
+import stanza
+
+stanza.download(
+    "en",
+    processors="tokenize,pos,lemma",
+    model_dir="/opt/nexus/stanza-resources",
+    verbose=False,
+)
+snapshot_download(repo_id="facebook/bart-large-mnli")
+snapshot_download(repo_id="j-hartmann/emotion-english-distilroberta-base")
+PY
 
 # Local fixture runs mount exact Git checkouts at these paths. Docker Desktop can
 # present bind-mounted repositories with ownership that differs from the
