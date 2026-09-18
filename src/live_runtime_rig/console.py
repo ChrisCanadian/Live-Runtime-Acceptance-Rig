@@ -69,4 +69,5 @@ class Console:
         self._line(f"Passed: {summary['passed']}")
         self._line(f"Failed: {summary['failed']}")
         self._line(f"Skipped: {summary['skipped']}")
+        self._line(f"Not run: {summary.get('not_run', 0)}")
         self._line(f"Evidence: {evidence_path}")
