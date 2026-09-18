@@ -46,6 +46,17 @@ def _count(runtime: Any, kernel_id: str) -> int:
 
 
 class FlightControlInventoryCase:
+    planned_checks = (
+        "Exactly 17 required kernel managers are declared",
+        "Authoritative registry matches the required 17-kernel inventory",
+        "No kernel manager is missing",
+        "No foreign kernel manager is present",
+        "No required kernel reports FAILED at boot",
+        "No required kernel is allowed to hide behind DEGRADED for monster GREEN",
+        "Primary acceptance subject is production UserID 18",
+        "Monster runtime is using a REAL provider, not the deterministic fixture",
+        "Resolved model identity is reported for the real provider",
+    )
     name = "monster-flight-control-inventory"
     suite = "01 FLIGHT CONTROL INVENTORY"
 
@@ -75,6 +86,12 @@ class FlightControlInventoryCase:
 
 
 class CanonicalIngressBaselineCase:
+    planned_checks = (
+        "Canonical /v1/chat/completions turn is released",
+        "Canonical ingress returns response text",
+        "Baseline turn emits all required inline receipts",
+        "Baseline turn carries no observed pre-inference failures",
+    )
     name = "monster-canonical-ingress-baseline"
     suite = "02 CANONICAL RUNTIME INGRESS"
 
@@ -110,6 +127,11 @@ class CanonicalIngressBaselineCase:
 
 
 class SecurityAndAuthorityCase:
+    planned_checks = (
+        "Unauthenticated principal is not released as a normal turn",
+        "Security kernel emits evidence for the denied/guarded path",
+        "Per-request model/provider override is rejected at canonical ingress",
+    )
     name = "monster-security-authority"
     suite = "03 SECURITY / AUTHORITY"
 
@@ -143,6 +165,13 @@ class SecurityAndAuthorityCase:
 
 
 class RuntimeInitiatedToolLoopCase:
+    planned_checks = (
+        "Tool-loop turn is released",
+        "Runtime, not the test, executes a tool round",
+        "Evidence re-authenticates after tool execution",
+        "Provider is invoked again after tool result",
+        "Verified tool result reaches final response",
+    )
     name = "monster-runtime-initiated-tool-loop"
     suite = "04 GOVERNED TOOL LOOP"
 
@@ -172,6 +201,15 @@ class RuntimeInitiatedToolLoopCase:
 
 
 class ContinuityAndRestartCase:
+    planned_checks = (
+        "Initial continuity write turn released",
+        "Same-session recall turn released",
+        "Continuity kernel participates before restart",
+        "Restarted runtime releases same-session recovery turn",
+        "Continuity kernel participates after restart",
+        "Memory kernel participates after restart",
+        "Recovered answer contains durable marker",
+    )
     name = "monster-continuity-restart"
     suite = "05 CONTINUITY / RESTART"
 
@@ -209,6 +247,12 @@ class ContinuityAndRestartCase:
 
 
 class CrossUserIsolationCase:
+    planned_checks = (
+        "Primary principal turn released",
+        "Secondary principal turn released",
+        "Primary marker does not leak to secondary response",
+        "Primary and secondary sessions remain distinct",
+    )
     name = "monster-cross-user-isolation"
     suite = "06 CROSS-USER ISOLATION"
 
@@ -238,6 +282,13 @@ class CrossUserIsolationCase:
 
 
 class CognitionModesLearningCase:
+    planned_checks = (
+        "Complex cognition turn is released",
+        "Modes kernel executes through normal turn resolution",
+        "Cognition kernel executes through the canonical turn",
+        "Direct feedback turn is released",
+        "Learning kernel admits/records the feedback through runtime flow",
+    )
     name = "monster-cognition-modes-learning"
     suite = "07 COGNITION / MODES / LEARNING"
 
@@ -268,6 +319,12 @@ class CognitionModesLearningCase:
 
 
 class JobsArtifactsCase:
+    planned_checks = (
+        "Job request is handled through canonical runtime",
+        "Jobs kernel actually executes instead of prose-only simulation",
+        "Artifact request is handled through canonical runtime",
+        "Artifacts kernel actually executes instead of prose-only simulation",
+    )
     name = "monster-jobs-artifacts"
     suite = "08 JOBS / ARTIFACTS"
 
@@ -295,6 +352,13 @@ class JobsArtifactsCase:
 
 
 class FaultInjectionCase:
+    planned_checks = (
+        "Malformed runtime request fails closed",
+        "Caller cannot override provider binding",
+        "Provider failure injection flight control is commissioned",
+        "Tool timeout injection flight control is commissioned",
+        "Evidence failure injection flight control is commissioned",
+    )
     name = "monster-fault-injection"
     suite = "09 FAULT / FAIL-CLOSED"
 
@@ -326,6 +390,11 @@ class FaultInjectionCase:
 
 
 class ReceiptCoverageGateCase:
+    planned_checks = (
+        "Every one of the 17 required kernels emitted at least one real runtime receipt",
+        "Every required kernel has at least one observed executed operation",
+        "Monster campaign has zero missing flight-control receipts",
+    )
     name = "monster-receipt-coverage-gate"
     suite = "10 ALL-FLIGHT-CONTROLS GATE"
 
