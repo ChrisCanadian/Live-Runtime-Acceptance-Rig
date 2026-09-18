@@ -91,6 +91,10 @@ function Ensure-ExactCheckout {
     Write-Host "Pinning $Repository to $Sha ..." -ForegroundColor DarkGray
     Invoke-Checked -Command { git -C $Destination fetch origin $Sha --depth=1 } -Failure "Failed to fetch $Repository@$Sha"
     Invoke-Checked -Command { git -C $Destination checkout --detach $Sha } -Failure "Failed to checkout $Repository@$Sha"
+    # Cached Windows clones may still contain worktree bytes produced under an
+    # older .gitattributes policy. Hard-reset after the target commit is active
+    # so byte-exact staged donor files are rewritten using the target attributes.
+    Invoke-Checked -Command { git -C $Destination reset --hard $Sha } -Failure "Failed to normalize checkout $Repository@$Sha"
     $observed = (git -C $Destination rev-parse HEAD).Trim()
     if ($observed -ne $Sha) { throw "$Repository checkout mismatch. Expected $Sha, observed $observed" }
 }
@@ -139,6 +143,12 @@ $V5Root = Join-Path $RepoCache "nexus-v5-reconstruction"
 Ensure-ExactCheckout -Repository "ChrisCanadian/nexus-synapse-ndka" -Destination $NdkaRoot -Sha $NDKA_SHA
 Ensure-ExactCheckout -Repository "ChrisCanadian/nexus-synapse-runtime" -Destination $ProductionRoot -Sha $PRODUCTION_SHA
 Ensure-ExactCheckout -Repository "ChrisCanadian/nexus-v5-reconstruction" -Destination $V5Root -Sha $V5_SHA
+
+$SnapshotAttribute = (git -C $NdkaRoot check-attr text -- "migration_staging/v5_snapshot/migrations/0001_core.sql").Trim()
+if ($SnapshotAttribute -notmatch "text: unset$") {
+    throw "NDKA staged V5 byte-preservation attribute is not active: $SnapshotAttribute"
+}
+Write-Host "Staged V5 byte policy: VERIFIED (-text)" -ForegroundColor DarkGray
 
 $RunId = Get-Date -Format "yyyyMMdd_HHmmss"
 $RunRoot = Join-Path $RunsRoot ("monster_" + $RunId)
