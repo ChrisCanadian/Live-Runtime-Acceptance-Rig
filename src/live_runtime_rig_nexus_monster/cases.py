@@ -61,6 +61,15 @@ class FlightControlInventoryCase:
             _check("No foreign kernel manager is present", not health.get("unexpected"), (), tuple(health.get("unexpected", ()))),
             _check("No required kernel reports FAILED at boot", not health.get("failed_kernel_ids"), (), tuple(health.get("failed_kernel_ids", ()))),
             _check("No required kernel is allowed to hide behind DEGRADED for monster GREEN", not health.get("degraded_kernel_ids"), (), tuple(health.get("degraded_kernel_ids", ()))),
+            _check("Primary acceptance subject is production UserID 18", health.get("primary_user_id") == 18, 18, health.get("primary_user_id")),
+            _check("Monster runtime is using a REAL provider, not the deterministic fixture", health.get("real_provider") is True, True, {
+                "provider_kind": health.get("provider_kind"),
+                "provider_class": health.get("provider_class"),
+                "provider_id": health.get("provider_id"),
+                "model_id": health.get("model_id"),
+                "real_provider": health.get("real_provider"),
+            }),
+            _check("Resolved model identity is reported for the real provider", bool(str(health.get("model_id") or "").strip()), "non-empty model_id", health.get("model_id")),
         ]
         return CaseResult(checks=checks, evidence={"health": health})
 
