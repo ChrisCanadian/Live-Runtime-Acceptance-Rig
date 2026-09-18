@@ -19,14 +19,6 @@ RUN python -m pip install \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       -r /opt/nexus/v2-runtime-requirements.lock
 
-# The staged V2/V5 lock intentionally does not carry SentenceTransformers, but
-# production's full local NLP path imports it through LabelLearningEngine and
-# ProductionNLPPipeline. Use the current v5-compatible SentenceTransformers
-# release so we preserve the lock's transformers>=5 / huggingface-hub>=1 stack
-# instead of silently downgrading the shared runtime environment.
-RUN python -m pip install "sentence-transformers==6.0.1" \
-    && python -m pip check
-
 # The local Monster exercises the actual production NLP pipeline, not the
 # low-memory VM's static/lightweight fallback. Bake the immutable model assets
 # into the image so runtime classification is local/offline while APIFree.ai
@@ -43,6 +35,17 @@ stanza.download(
 )
 snapshot_download(repo_id="facebook/bart-large-mnli")
 snapshot_download(repo_id="j-hartmann/emotion-english-distilroberta-base")
+PY
+
+# Keep the already-expensive BART/DistilRoBERTa asset layer cacheable. The
+# production local NLP path also imports SentenceTransformer through
+# LabelLearningEngine/ProductionNLPPipeline, so add that compatible dependency
+# and its MiniLM asset in separate layers above the preserved model cache.
+RUN python -m pip install "sentence-transformers==6.0.1" \
+    && python -m pip check
+
+RUN python - <<'PY'
+from huggingface_hub import snapshot_download
 snapshot_download(repo_id="sentence-transformers/all-MiniLM-L6-v2")
 PY
 
