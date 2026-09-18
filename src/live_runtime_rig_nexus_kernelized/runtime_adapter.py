@@ -72,6 +72,71 @@ class _CanonicalIdentityOwnerResolver:
         return self._fixture_owners.get(str(user_id), "")
 
 
+class _AcceptanceSubjectResolver:
+    """Acceptance-only identity override for an explicitly selected Nexus UserID.
+
+    The Monster must be able to exercise the personalized runtime for a known
+    protected subject without depending on a DiscordLink row being present in
+    the donor database. Only the configured synthetic external identity is
+    overridden; all other Discord identities continue through the normal resolver.
+    """
+
+    def __init__(
+        self,
+        *,
+        delegate: Any,
+        owner_resolver: _CanonicalIdentityOwnerResolver,
+        user_id: int,
+        external_user_id: str,
+        fallback_owner_key: str,
+    ) -> None:
+        self._delegate = delegate
+        self._owner_resolver = owner_resolver
+        self._user_id = user_id
+        self._external_user_id = external_user_id
+        self._fallback_owner_key = fallback_owner_key.strip()
+        self._permissions = frozenset(
+            {
+                "discord.chat",
+                "modes.read",
+                "modes.activate",
+                "modes.deactivate",
+                "tools.read",
+            }
+        )
+
+    async def resolve(self, message: Any) -> Any:
+        if message.external_user_id != self._external_user_id:
+            return await self._delegate.resolve(message)
+
+        from nexus_ndka.host.discord import DiscordPrincipal
+
+        owner_key = await self._owner_resolver.resolve_owner_key(
+            user_id=self._user_id,
+            external_scope_id=message.guild_id or "acceptance",
+        )
+        if not owner_key:
+            owner_key = self._fallback_owner_key
+        if not owner_key:
+            raise PermissionError("ACCEPTANCE_TEST_SUBJECT_MISSING_OWNER_KEY")
+
+        return DiscordPrincipal(
+            external_user_id=message.external_user_id,
+            external_scope_id=message.guild_id or "acceptance",
+            linked=True,
+            user_id=self._user_id,
+            owner_key=owner_key,
+            authenticated=True,
+            permissions=self._permissions,
+            metadata={
+                "link_source": "acceptance.explicit_test_subject",
+                "test_subject_user_id": self._user_id,
+                "identity_owner_source": "canonical_or_runtime_owner",
+                "trusted_permissions": tuple(sorted(self._permissions)),
+            },
+        )
+
+
 class KernelizedNexusRuntimeAdapter:
     def __init__(self, config: RigConfig) -> None:
         self.config = config
@@ -105,6 +170,16 @@ class KernelizedNexusRuntimeAdapter:
         if not isinstance(parsed, dict):
             raise ValueError("NEXUS_RIG_IDENTITY_OWNERS_JSON must be an object")
         self.fixture_owners = {str(key): str(value) for key, value in parsed.items()}
+        raw_test_user_id = os.environ.get("NEXUS_RIG_TEST_USER_ID", "").strip()
+        self.test_user_id = int(raw_test_user_id) if raw_test_user_id else None
+        self.test_external_user_id = os.environ.get(
+            "NEXUS_RIG_PRIMARY_DISCORD_ID",
+            (
+                f"acceptance-user-{self.test_user_id}"
+                if self.test_user_id is not None
+                else ""
+            ),
+        ).strip()
         self._assembled: Any | None = None
         self._discord: Any | None = None
         self._recorder: _RecordingTurnRunner | None = None
@@ -184,6 +259,20 @@ class KernelizedNexusRuntimeAdapter:
             identity_owner_resolver=owner_resolver,
             user_tz_name=self.user_tz_name,
         )
+        if self.test_user_id is not None:
+            if self.test_user_id <= 0:
+                raise ValueError("NEXUS_RIG_TEST_USER_ID must be a positive integer")
+            if not self.test_external_user_id:
+                raise ValueError(
+                    "NEXUS_RIG_PRIMARY_DISCORD_ID must be set for explicit test subject mode"
+                )
+            discord.identity_resolver = _AcceptanceSubjectResolver(
+                delegate=discord.identity_resolver,
+                owner_resolver=owner_resolver,
+                user_id=self.test_user_id,
+                external_user_id=self.test_external_user_id,
+                fallback_owner_key=str(assembled.v5_runtime.settings.owner_key),
+            )
         recorder = _RecordingTurnRunner(assembled.host.turn_runner)
         discord.turn_runner = recorder
         self._assembled = assembled
