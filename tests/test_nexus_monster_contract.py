@@ -114,7 +114,7 @@ def test_monster_declares_exact_check_level_plan():
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
     assert len(planned) == 56
-    assert len(set(planned)) == 53
+    assert len(set(planned)) == 56
 
     source = Path(cases.__file__).read_text(encoding="utf-8")
     observed_literal_checks = source.count("_check(") - 1
