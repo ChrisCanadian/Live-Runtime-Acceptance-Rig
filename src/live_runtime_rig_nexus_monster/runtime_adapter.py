@@ -280,32 +280,55 @@ class KernelizedMonsterRuntimeAdapter:
             )
 
         signals = dict(result.state.signals or {})
-        source = str(signals.get("donor_source") or "")
+        donor_analysis = dict(signals.get("donor_analysis") or {})
+        intent_data = dict(donor_analysis.get("intent_data") or {})
+        latency = dict(donor_analysis.get("latency_breakdown") or {})
+        raw_source = str(signals.get("donor_source") or "")
         all_intents = dict(signals.get("all_intents") or {})
-        scores = [float(value) for value in all_intents.values() if isinstance(value, (int, float))]
+        scores = [
+            float(value)
+            for value in all_intents.values()
+            if isinstance(value, (int, float))
+        ]
         score_spread = (max(scores) - min(scores)) if scores else 0.0
+        sentence_count = int(intent_data.get("sentence_count") or 0)
 
-        if source != "hf_api_lightweight":
+        # The full local ProductionNLPPipeline returns SentenceLevelAnnotator's
+        # intent_data + latency_breakdown shape. The low-memory VM HTTP fallback
+        # and the static last-resort path do not. The Monster deliberately tests
+        # this full pipeline locally while APIFree.ai remains the response-model
+        # inference provider.
+        full_local_pipeline = (
+            raw_source != "hf_api_lightweight"
+            and sentence_count > 0
+            and bool(latency)
+            and bool(all_intents)
+            and score_spread > 1e-6
+        )
+        if not full_local_pipeline:
             raise RuntimeError(
-                "ANALYSIS_PREFLIGHT_FAILED: production AnalysisManager did not use "
-                f"the live HF classification path (source={source!r})"
-            )
-        if not all_intents or score_spread <= 1e-6:
-            raise RuntimeError(
-                "ANALYSIS_PREFLIGHT_FAILED: NLP classification remained static/uniform"
+                "ANALYSIS_PREFLIGHT_FAILED: full local production NLP pipeline "
+                "did not execute; lightweight/static analysis is forbidden in "
+                "the local Monster lane "
+                f"(source={raw_source!r}, sentence_count={sentence_count}, "
+                f"latency_keys={tuple(sorted(latency))})"
             )
 
         return {
             "status": result.receipt.status.value,
-            "source": source,
+            "source": "production_full_nlp_local",
+            "donor_source": raw_source,
             "intent": result.state.intent,
             "intent_confidence": result.state.intent_confidence,
             "emotion": result.state.emotion,
             "mood": result.state.mood,
             "topic": result.state.topic,
+            "sentence_count": sentence_count,
+            "latency_components": tuple(sorted(latency)),
             "intent_label_count": len(all_intents),
             "intent_score_spread": score_spread,
             "static_defaults": False,
+            "hf_inference_api_used": False,
         }
 
     def _run_production_rag_probe(self) -> dict[str, Any]:
