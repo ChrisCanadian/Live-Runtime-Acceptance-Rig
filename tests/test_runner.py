@@ -64,6 +64,7 @@ def test_complete_toy_campaign_passes_and_compares_protected_state(tmp_path) -> 
     assert run["acceptance_status"] == "PASS"
     assert run["summary"]["failed"] == 0
     assert run["summary"]["skipped"] == 1
+    assert run["summary"]["not_run"] == 0
     assert any(
         check["name"] == "Protected state remained unchanged"
         and check["status"] == "PASS"
@@ -122,6 +123,8 @@ def test_early_database_failure_still_writes_complete_evidence(tmp_path) -> None
     )
     assert run["framework_status"] == "COMPLETED"
     assert run["acceptance_status"] == "FAIL"
+    assert run["summary"]["failed"] == 1
+    assert run["summary"]["not_run"] == 3
     error = json.loads(
         (runner.evidence.root / "errors" / "database_preflight.json").read_text(
             encoding="utf-8"
@@ -144,6 +147,7 @@ def test_quiet_prints_only_final_summary(tmp_path) -> None:
     output = stream.getvalue()
     assert "FRAMEWORK: COMPLETED" in output
     assert "RESULT: PASS" in output
+    assert "Not run: 0" in output
     assert "LIVE RUNTIME ACCEPTANCE RIG" not in output
     assert "[00/" not in output
     assert "[PASS]" not in output
