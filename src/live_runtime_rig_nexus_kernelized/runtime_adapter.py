@@ -76,7 +76,12 @@ class KernelizedNexusRuntimeAdapter:
     def __init__(self, config: RigConfig) -> None:
         self.config = config
         self.production_checkout = Path(os.environ["NEXUS_RIG_PRODUCTION_CHECKOUT"]).resolve()
-        self.v5_checkout = Path(os.environ["NEXUS_RIG_V5_CHECKOUT"]).resolve()
+        raw_v5_checkout = os.environ.get("NEXUS_RIG_V5_CHECKOUT", "").strip()
+        self.v5_checkout = (
+            None
+            if not raw_v5_checkout or raw_v5_checkout.upper() == "STAGED"
+            else Path(raw_v5_checkout).resolve()
+        )
         self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
         production_manifest = os.environ.get("NEXUS_RIG_PRODUCTION_SOURCE_MANIFEST")
         v5_authority = os.environ.get("NEXUS_RIG_V5_SOURCE_AUTHORITY")
@@ -105,12 +110,15 @@ class KernelizedNexusRuntimeAdapter:
         self._recorder: _RecordingTurnRunner | None = None
 
     def _configure_v5_environment(self) -> None:
-        migrations = self.v5_checkout / "migrations"
-        if not migrations.is_dir():
-            raise FileNotFoundError(f"V5 migrations directory not found: {migrations}")
         self.artifact_path.mkdir(parents=True, exist_ok=True)
         os.environ["NEXUS_DB_PATH"] = str(self.config.database_path)
-        os.environ["NEXUS_MIGRATIONS_PATH"] = str(migrations)
+        if self.v5_checkout is not None:
+            migrations = self.v5_checkout / "migrations"
+            if not migrations.is_dir():
+                raise FileNotFoundError(f"V5 migrations directory not found: {migrations}")
+            os.environ["NEXUS_MIGRATIONS_PATH"] = str(migrations)
+        else:
+            os.environ.pop("NEXUS_MIGRATIONS_PATH", None)
         os.environ["NEXUS_ARTIFACT_PATH"] = str(self.artifact_path)
         os.environ["NEXUS_RUNTIME_PROFILE"] = self.runtime_profile
         os.environ["NEXUS_PROVIDER_KIND"] = self.provider_kind
@@ -126,12 +134,16 @@ class KernelizedNexusRuntimeAdapter:
     def start(self) -> None:
         if self._assembled is not None:
             raise RuntimeError("kernelized Nexus runtime adapter already started")
-        for path, label in (
-            (self.production_checkout, "production donor source"),
-            (self.v5_checkout, "V5 assembly source"),
-        ):
-            if not path.is_dir():
-                raise FileNotFoundError(f"{label} not found: {path}")
+        if not self.production_checkout.is_dir():
+            raise FileNotFoundError(
+                f"production donor source not found: {self.production_checkout}"
+            )
+        if self.v5_checkout is not None and not self.v5_checkout.is_dir():
+            raise FileNotFoundError(f"V5 assembly source not found: {self.v5_checkout}")
+        if self.v5_checkout is None and self.v5_source_authority is not None:
+            raise ValueError(
+                "staged V5 mode cannot use NEXUS_RIG_V5_SOURCE_AUTHORITY"
+            )
         if self.production_source_manifest is not None and not self.production_source_manifest.is_file():
             raise FileNotFoundError(
                 f"production source manifest not found: {self.production_source_manifest}"
@@ -325,7 +337,7 @@ class KernelizedNexusRuntimeAdapter:
         return (
             "authoritative-17-kernel-readiness",
             "discord-linked-governed-turn",
-            "discord-guest-fail-closed",
+            "discord-guest-bare-inference",
             "discord-mode-command",
             "discord-model-read-only",
             "discord-tools-read-only-catalog",
