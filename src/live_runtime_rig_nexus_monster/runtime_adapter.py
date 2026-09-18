@@ -154,6 +154,7 @@ class KernelizedMonsterRuntimeAdapter:
         self._boundary_events: list[dict[str, Any]] = []
         self._provider_probe: dict[str, Any] = {}
         self._rag_probe: dict[str, Any] = {}
+        self._analysis_probe: dict[str, Any] = {}
 
     def _configure_v5_environment(self) -> None:
         self.artifact_path.mkdir(parents=True, exist_ok=True)
@@ -245,6 +246,66 @@ class KernelizedMonsterRuntimeAdapter:
             "model_id": result.envelope.model_id,
             "response_chars": len(result.envelope.text),
             "route_failures": tuple(result.envelope.route_failures),
+        }
+
+    def _run_production_analysis_probe(self, assembled: Any) -> dict[str, Any]:
+        from nexus_ndka.kernels.analysis.contracts import AnalysisRequest
+        from nexus_ndka.runtime.contracts import KernelStatus, RuntimeContext
+
+        manager = assembled.host.registry.get("nexus.analysis")
+        context = RuntimeContext(
+            request_id="monster-analysis-preflight",
+            turn_id="monster-analysis-preflight",
+            actor_id=str(self.primary_user_id),
+            scope_id=str(self.primary_user_id),
+            session_id="monster-analysis-preflight",
+            metadata={"acceptance_preflight": True},
+        )
+
+        result = asyncio.run(
+            manager.execute(
+                AnalysisRequest(
+                    user_text=(
+                        "I am frustrated that this acceptance test keeps failing, "
+                        "but I am curious and determined to fix it."
+                    )
+                ),
+                context,
+            )
+        )
+        if result.receipt.status is not KernelStatus.OK:
+            raise RuntimeError(
+                "ANALYSIS_PREFLIGHT_FAILED: "
+                + str(result.receipt.details or result.receipt.status.value)
+            )
+
+        signals = dict(result.state.signals or {})
+        source = str(signals.get("donor_source") or "")
+        all_intents = dict(signals.get("all_intents") or {})
+        scores = [float(value) for value in all_intents.values() if isinstance(value, (int, float))]
+        score_spread = (max(scores) - min(scores)) if scores else 0.0
+
+        if source != "hf_api_lightweight":
+            raise RuntimeError(
+                "ANALYSIS_PREFLIGHT_FAILED: production AnalysisManager did not use "
+                f"the live HF classification path (source={source!r})"
+            )
+        if not all_intents or score_spread <= 1e-6:
+            raise RuntimeError(
+                "ANALYSIS_PREFLIGHT_FAILED: NLP classification remained static/uniform"
+            )
+
+        return {
+            "status": result.receipt.status.value,
+            "source": source,
+            "intent": result.state.intent,
+            "intent_confidence": result.state.intent_confidence,
+            "emotion": result.state.emotion,
+            "mood": result.state.mood,
+            "topic": result.state.topic,
+            "intent_label_count": len(all_intents),
+            "intent_score_spread": score_spread,
+            "static_defaults": False,
         }
 
     def _run_production_rag_probe(self) -> dict[str, Any]:
@@ -358,6 +419,7 @@ class KernelizedMonsterRuntimeAdapter:
             )
 
         self._provider_probe = self._run_real_provider_probe(assembled)
+        self._analysis_probe = self._run_production_analysis_probe(assembled)
         self._rag_probe = self._run_production_rag_probe()
 
         self._assembled = assembled
@@ -375,6 +437,7 @@ class KernelizedMonsterRuntimeAdapter:
         self._assembled = None
         self._provider_probe = {}
         self._rag_probe = {}
+        self._analysis_probe = {}
 
     def restart(self) -> None:
         self.close()
@@ -726,6 +789,7 @@ class KernelizedMonsterRuntimeAdapter:
                 and "fake" not in str(getattr(provider, "model_id", "")).casefold()
             ),
             "provider_probe": dict(self._provider_probe),
+            "analysis_probe": dict(self._analysis_probe),
             "rag_probe": dict(self._rag_probe),
         }
 
