@@ -78,12 +78,12 @@ function Require-RealProviderConfiguration {
     throw "Unsupported real Monster provider kind: $Kind"
 }
 
-function Assert-LocalProductionNlpConfiguration {
-    # The Monster is a local full-runtime acceptance lane. It exercises the
-    # complete production NLP pipeline locally from image-baked assets:
-    # Stanza + BART zero-shot + DistilRoBERTa emotion + VADER. APIFree.ai is
-    # reserved for the actual response-model inference role.
-    Write-Host "NLP analyzer: VERIFIED (full local production pipeline; no HF inference API)" -ForegroundColor DarkGray
+function Write-LocalProductionNlpRequirement {
+    # Policy declaration only. The Windows host is NOT proof that the Linux
+    # Monster image can execute production NLP. The Dockerfile contains the
+    # package/model closure smoke, and only a successful image build earns the
+    # VERIFIED statement below.
+    Write-Host "NLP analyzer policy: full local production pipeline required; Linux image proof pending" -ForegroundColor DarkGray
 }
 
 function Ensure-ExactCheckout {
@@ -154,7 +154,7 @@ Write-Host "RAG embedding host: VERIFIED (nomic-embed-text)" -ForegroundColor Da
 
 $ProviderEnv = Read-DotEnv -Path $ProviderEnvFile
 Require-RealProviderConfiguration -DotEnv $ProviderEnv -Kind $ProviderKind
-Assert-LocalProductionNlpConfiguration
+Write-LocalProductionNlpRequirement
 
 & gh auth status *> $null
 if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not authenticated." }
@@ -278,6 +278,7 @@ Invoke-Checked -Command {
         --tag $ImageTag `
         $RigRoot
 } -Failure "Failed to build the local monster runtime image."
+Write-Host "Linux NLP image: VERIFIED (offline dependency + model closure smoke passed during build)" -ForegroundColor DarkGray
 
 $dockerArgs = @(
     "run",
