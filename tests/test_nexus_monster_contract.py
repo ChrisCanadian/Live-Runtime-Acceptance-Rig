@@ -32,7 +32,7 @@ def test_monster_required_cases_do_not_use_skip_semantics():
     source = Path(cases.__file__).read_text(encoding="utf-8")
     assert "CheckStatus.SKIP" not in source
     assert "_skip(" not in source
-    assert "missing flight-control receipts" in source
+    assert "unexercised required kernel boundaries" in source
 
 
 def test_monster_uses_canonical_surface_neutral_ingress():
@@ -113,12 +113,12 @@ def test_monster_declares_exact_check_level_plan():
         for case in registered
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(planned) == 53
+    assert len(planned) == 56
     assert len(set(planned)) == 53
 
     source = Path(cases.__file__).read_text(encoding="utf-8")
     observed_literal_checks = source.count("_check(") - 1
-    assert observed_literal_checks == 53
+    assert observed_literal_checks == 56
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -147,3 +147,38 @@ def test_monster_inventory_requires_live_provider_and_rag_preflights():
     assert "_run_real_provider_probe" in adapter
     assert "_run_production_rag_probe" in adapter
     assert "RAG_PREFLIGHT_FAILED" in adapter
+
+
+
+def test_monster_exercises_non_inline_departments_only_through_public_managers():
+    adapter = (
+        Path(__file__).parents[1]
+        / "src"
+        / "live_runtime_rig_nexus_monster"
+        / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    assert "exercise_kernel_boundary" in adapter
+    assert "assembled.host.registry.get(kernel_id)" in adapter
+    assert "specialist.execute" not in adapter
+    assert '"canonical_turn": 0' in adapter
+    assert '"boundary_probe": 0' in adapter
+    assert "Cognition public boundary executes advisory node projection" in source
+    assert "Continuity public boundary creates durable state" in source
+    assert "Learning public boundary scans direct feedback without promotion" in source
+    assert "Jobs public boundary enqueues isolated work" in source
+    assert "Artifacts public boundary creates durable custody" in source
+    assert "Surfaces public boundary projects a release-style event" in source
+
+
+def test_monster_does_not_claim_all_17_are_foreground_chat_dependencies():
+    adapter = (
+        Path(__file__).parents[1]
+        / "src"
+        / "live_runtime_rig_nexus_monster"
+        / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+    assert '"canonical_chat_active"' in adapter
+    assert '"owned_boundary_or_conditional"' in adapter
+    assert '"known_test_required_edges"' in adapter
+    assert "Cross-kernel caller wiring is" in adapter
