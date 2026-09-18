@@ -117,12 +117,12 @@ def test_monster_declares_exact_check_level_plan():
         for case in registered
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(planned) == 56
-    assert len(set(planned)) == 56
+    assert len(planned) == 58
+    assert len(set(planned)) == 58
 
     source = Path(cases.__file__).read_text(encoding="utf-8")
     observed_literal_checks = source.count("_check(") - 1
-    assert observed_literal_checks == 56
+    assert observed_literal_checks == 58
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -134,6 +134,31 @@ def test_monster_reporter_distinguishes_not_run_checks_from_stages():
     assert "MONSTER ACCEPTANCE CHECKS NOT RUN" in reporter
     assert "MONSTER FLIGHT-CONTROL STAGES NOT REACHED" in reporter
 
+
+
+def test_monster_requires_live_nlp_and_forbids_static_defaults():
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    adapter = (
+        Path(__file__).parents[1]
+        / "src"
+        / "live_runtime_rig_nexus_monster"
+        / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+    launcher = (
+        Path(__file__).parents[1]
+        / "scripts"
+        / "run_nexus_monster_docker.ps1"
+    ).read_text(encoding="utf-8")
+    assert "Production AnalysisManager performs live NLP classification" in source
+    assert "Production NLP returns non-static intent evidence" in source
+    assert "_run_production_analysis_probe" in adapter
+    assert "ANALYSIS_PREFLIGHT_FAILED" in adapter
+    assert '"static_defaults": False' in adapter
+    assert "Require-ProductionNlpConfiguration" in launcher
+    assert '"-e", "HF_API_TOKEN"' in launcher
+    assert '"-e", "NLP_ZERO_SHOT_API=huggingface"' in launcher
+    assert '"-e", "NLP_EMOTION_API=huggingface"' in launcher
+    assert "Static AnalysisManager defaults are forbidden" in launcher
 
 
 def test_monster_inventory_requires_live_provider_and_rag_preflights():
@@ -186,3 +211,12 @@ def test_monster_does_not_claim_all_17_are_foreground_chat_dependencies():
     assert '"owned_boundary_or_conditional"' in adapter
     assert '"known_test_required_edges"' in adapter
     assert "Cross-kernel caller wiring is" in adapter
+
+
+
+def test_monster_kernel_status_assertions_follow_canonical_lowercase_values():
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    assert "def _status_ok" in source
+    assert '.get("receipt_status") == "OK"' not in source
+    assert '.get("snapshot_status") == "OK"' not in source
+    assert '.get("verify_status") == "OK"' not in source
