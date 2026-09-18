@@ -59,6 +59,7 @@ class FlightControlInventoryCase:
         "Real provider completes an external inference preflight",
         "Production RAG retriever initializes against isolated Chroma state",
         "RAG embedding endpoint returns a real vector",
+        "Production RAG returns UserID 18 semantic memory candidates",
     )
     name = "monster-flight-control-inventory"
     suite = "01 FLIGHT CONTROL INVENTORY"
@@ -103,6 +104,12 @@ class FlightControlInventoryCase:
                 "RAG embedding endpoint returns a real vector",
                 int((health.get("rag_probe") or {}).get("embedding_dimensions") or 0) > 0,
                 ">0 embedding dimensions",
+                health.get("rag_probe"),
+            ),
+            _check(
+                "Production RAG returns UserID 18 semantic memory candidates",
+                int((health.get("rag_probe") or {}).get("user18_semantic_matches") or 0) > 0,
+                ">0 UserID 18 semantic candidates",
                 health.get("rag_probe"),
             ),
         ]
