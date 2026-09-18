@@ -78,6 +78,33 @@ function Require-RealProviderConfiguration {
     throw "Unsupported real Monster provider kind: $Kind"
 }
 
+function Require-ProductionNlpConfiguration {
+    param([Parameter(Mandatory = $true)][hashtable]$DotEnv)
+
+    $token = [Environment]::GetEnvironmentVariable("HF_API_TOKEN")
+    if (-not $token) { $token = [Environment]::GetEnvironmentVariable("HUGGINGFACE_API_KEY") }
+    if (-not $token) { $token = [Environment]::GetEnvironmentVariable("HF_TOKEN") }
+    if (-not $token -and $DotEnv.ContainsKey("HF_API_TOKEN")) {
+        $token = $DotEnv["HF_API_TOKEN"]
+    }
+    if (-not $token -and $DotEnv.ContainsKey("HUGGINGFACE_API_KEY")) {
+        $token = $DotEnv["HUGGINGFACE_API_KEY"]
+    }
+    if (-not $token -and $DotEnv.ContainsKey("HF_TOKEN")) {
+        $token = $DotEnv["HF_TOKEN"]
+    }
+
+    if (-not $token) {
+        throw "Full Monster requires live production NLP classification, but no Hugging Face token was found. Static AnalysisManager defaults are forbidden in this lane."
+    }
+
+    $env:HF_API_TOKEN = $token
+    $env:NLP_ENABLED = "false"
+    $env:NLP_ZERO_SHOT_API = "huggingface"
+    $env:NLP_EMOTION_API = "huggingface"
+    Write-Host "NLP analyzer: VERIFIED (HF lightweight production path; static defaults forbidden)" -ForegroundColor DarkGray
+}
+
 function Ensure-ExactCheckout {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
@@ -146,6 +173,7 @@ Write-Host "RAG embedding host: VERIFIED (nomic-embed-text)" -ForegroundColor Da
 
 $ProviderEnv = Read-DotEnv -Path $ProviderEnvFile
 Require-RealProviderConfiguration -DotEnv $ProviderEnv -Kind $ProviderKind
+Require-ProductionNlpConfiguration -DotEnv $ProviderEnv
 
 & gh auth status *> $null
 if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not authenticated." }
@@ -294,6 +322,9 @@ $dockerArgs = @(
     "-e", "NEXUS_DEPLOYMENT_ID=local-monster-$RunId",
     "-e", "NEXUS_RUNTIME_VERSION=ndka-monster-$NDKA_SHA",
     "-e", "NLP_ENABLED=false",
+    "-e", "NLP_ZERO_SHOT_API=huggingface",
+    "-e", "NLP_EMOTION_API=huggingface",
+    "-e", "HF_API_TOKEN",
     "-e", "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434",
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
