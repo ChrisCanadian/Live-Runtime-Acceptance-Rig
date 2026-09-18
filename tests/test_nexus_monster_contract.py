@@ -100,7 +100,11 @@ def test_monster_real_llm_lane_fails_closed_on_fake_provider():
     assert "materialize_ndka_staged_v5_exact.py" in launcher
     assert "Staged V5 host bytes: VERIFIED" in launcher
     assert "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434" in launcher
-    assert "target=/production/data" in launcher
+    assert "target=/production/data" not in launcher
+    assert "ProductionRuntimeRoot" in launcher
+    assert "git clone --quiet --no-hardlinks $ProductionRoot $ProductionRuntimeRoot" in launcher
+    assert "source=$ProductionRuntimeRoot,target=/production" in launcher
+    assert "Production donor immutability: VERIFIED" in launcher
     assert "RAG embedding host: VERIFIED" in launcher
     assert "--production-checkout $ProductionRoot" in launcher
 
