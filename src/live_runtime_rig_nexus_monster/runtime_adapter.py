@@ -760,6 +760,146 @@ class KernelizedMonsterRuntimeAdapter:
 
         raise ValueError(f"unsupported Monster boundary probe kernel: {kernel_id}")
 
+    def exercise_fault_boundary(self, fault: str, *, marker: str) -> Mapping[str, Any]:
+        """Commission bounded failure controls through real public managers.
+
+        The acceptance harness may swap a department's operation owner only for
+        the duration of one tagged probe. The request still crosses the real
+        manager policy/normalization/receipt boundary, and the original owner is
+        restored in finally. No production source or persistent donor state is
+        modified.
+        """
+
+        assembled, _ = self._require_started()
+        context = self._boundary_context(label=f"fault:{fault}:{marker}")
+
+        if fault == "provider_timeout":
+            from nexus_ndka.kernels.provider.contracts import (
+                ProviderOperation,
+                ProviderRequest,
+            )
+            from nexus_ndka.runtime.contracts import KernelStatus
+
+            manager = assembled.host.registry.get("nexus.provider")
+            original = manager._operation_owner[ProviderOperation.GENERATE]
+
+            class AcceptanceTimeoutSpecialist:
+                specialist_id = "acceptance_provider_timeout"
+                operations = frozenset({ProviderOperation.GENERATE})
+
+                async def execute(self, request, runtime_context):
+                    del request, runtime_context
+                    raise TimeoutError("acceptance injected provider timeout")
+
+            manager._operation_owner[ProviderOperation.GENERATE] = AcceptanceTimeoutSpecialist()
+            try:
+                result = asyncio.run(
+                    manager.execute(
+                        ProviderRequest(
+                            operation=ProviderOperation.GENERATE,
+                            system_prompt="Acceptance provider failure control.",
+                            user_prompt="Exercise provider timeout handling.",
+                        ),
+                        context,
+                    )
+                )
+            finally:
+                manager._operation_owner[ProviderOperation.GENERATE] = original
+
+            self._observe_boundary_result(result, label="fault.provider_timeout")
+            return {
+                "fault": fault,
+                "receipt_status": result.receipt.status.value,
+                "error_type": result.receipt.details.get("error_type"),
+                "specialist_failure": result.envelope.diagnostics.get("specialist_failure"),
+                "restored": manager._operation_owner[ProviderOperation.GENERATE] is original,
+                "bounded": result.receipt.status is KernelStatus.FAILED,
+            }
+
+        if fault == "tool_timeout":
+            from nexus_ndka.kernels.tools.contracts import ToolOperation, ToolRequest
+            from nexus_ndka.runtime.contracts import KernelStatus
+
+            manager = assembled.host.registry.get("nexus.tools")
+            original = manager._operation_owner[ToolOperation.EXECUTE]
+
+            class AcceptanceTimedOutToolSpecialist:
+                specialist_id = "acceptance_tool_timeout"
+                operations = frozenset({ToolOperation.EXECUTE})
+
+                async def execute(self, request, runtime_context):
+                    del request, runtime_context
+                    return {
+                        "execution_id": f"acceptance-timeout:{marker}",
+                        "status": "TIMED_OUT",
+                        "output": {},
+                        "artifact_ids": (),
+                        "media_ids": (),
+                        "error_code": "ACCEPTANCE_TIMEOUT",
+                        "execution_receipt_id": f"acceptance-timeout-receipt:{marker}",
+                        "attempt_count": 1,
+                        "provenance": {"acceptance_fault_injection": "tool_timeout"},
+                    }
+
+            manager._operation_owner[ToolOperation.EXECUTE] = AcceptanceTimedOutToolSpecialist()
+            try:
+                result = asyncio.run(
+                    manager.execute(
+                        ToolRequest(
+                            operation=ToolOperation.EXECUTE,
+                            tool_id="calculate",
+                            version="1.0",
+                            arguments={"expression": "17 * 19"},
+                            provider_proposal_id=f"acceptance-timeout:{marker}",
+                        ),
+                        context,
+                    )
+                )
+            finally:
+                manager._operation_owner[ToolOperation.EXECUTE] = original
+
+            self._observe_boundary_result(result, label="fault.tool_timeout")
+            return {
+                "fault": fault,
+                "receipt_status": result.receipt.status.value,
+                "terminal_status": result.envelope.status,
+                "error_code": result.envelope.error_code,
+                "restored": manager._operation_owner[ToolOperation.EXECUTE] is original,
+                "bounded": (
+                    result.envelope.status == "TIMED_OUT"
+                    and result.receipt.status is KernelStatus.DEGRADED
+                ),
+            }
+
+        if fault == "forged_evidence":
+            from nexus_ndka.kernels.evidence.contracts import EvidenceRequest
+            from nexus_ndka.runtime.contracts import KernelStatus
+
+            manager = assembled.host.registry.get("nexus.evidence")
+            result = asyncio.run(
+                manager.execute(
+                    EvidenceRequest(
+                        actor_authenticated=True,
+                        authorized=True,
+                        authority_reference_ids=(f"acceptance-authority:{marker}",),
+                        tool_statuses={
+                            f"forged-execution:{marker}": "SUCCEEDED",
+                        },
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(result, label="fault.forged_evidence")
+            return {
+                "fault": fault,
+                "receipt_status": result.receipt.status.value,
+                "reason": result.receipt.details.get("reason"),
+                "stage": result.receipt.details.get("stage"),
+                "bounded": result.receipt.status is KernelStatus.REJECTED,
+            }
+
+        raise ValueError(f"unsupported Monster fault boundary: {fault}")
+
     def chat(
         self,
         text: str,
