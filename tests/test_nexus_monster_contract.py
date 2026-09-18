@@ -253,7 +253,7 @@ def test_monster_fault_controls_are_commissioned_through_real_manager_boundaries
     assert "acceptance injected provider timeout" in adapter
     assert '"status": "TIMED_OUT"' in adapter
     assert "declared_tool_status_not_evidence" not in adapter
-    assert "assembled.host.registry.get("nexus.provider")" in adapter
-    assert "assembled.host.registry.get("nexus.tools")" in adapter
-    assert "assembled.host.registry.get("nexus.evidence")" in adapter
+    assert 'assembled.host.registry.get("nexus.provider")' in adapter
+    assert 'assembled.host.registry.get("nexus.tools")' in adapter
+    assert 'assembled.host.registry.get("nexus.evidence")' in adapter
     assert "finally:" in adapter
