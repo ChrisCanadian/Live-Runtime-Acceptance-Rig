@@ -145,6 +145,8 @@ class KernelizedMonsterRuntimeAdapter:
             kernel_id: {} for kernel_id in REQUIRED_KERNEL_IDS
         }
         self._turns: list[dict[str, Any]] = []
+        self._provider_probe: dict[str, Any] = {}
+        self._rag_probe: dict[str, Any] = {}
 
     def _configure_v5_environment(self) -> None:
         self.artifact_path.mkdir(parents=True, exist_ok=True)
@@ -187,6 +189,97 @@ class KernelizedMonsterRuntimeAdapter:
             permissions=self.permissions if authenticated else frozenset(),
             metadata={"acceptance_principal": label, "fixture": True},
         )
+
+    def _run_real_provider_probe(self, assembled: Any) -> dict[str, Any]:
+        from nexus_ndka.kernels.provider.contracts import (
+            InferenceRole,
+            ProviderOperation,
+            ProviderRequest,
+        )
+        from nexus_ndka.runtime.contracts import KernelStatus, RuntimeContext
+
+        manager = assembled.host.registry.get("nexus.provider")
+        context = RuntimeContext(
+            request_id="monster-provider-preflight",
+            turn_id="monster-provider-preflight",
+            actor_id=str(self.primary_user_id),
+            scope_id=str(self.primary_user_id),
+            session_id="monster-provider-preflight",
+            metadata={"acceptance_preflight": True},
+        )
+
+        async def execute_probe():
+            return await manager.execute(
+                ProviderRequest(
+                    operation=ProviderOperation.GENERATE,
+                    system_prompt=(
+                        "You are a transport preflight. Return one brief acknowledgment. "
+                        "Do not call tools."
+                    ),
+                    user_prompt="Reply with a brief acknowledgment.",
+                    role=InferenceRole.PRIMARY_RESPONSE,
+                    required_capabilities=frozenset({"TEXT"}),
+                    available_tools=(),
+                ),
+                context,
+            )
+
+        result = asyncio.run(execute_probe())
+        if result.receipt.status is not KernelStatus.OK:
+            raise RuntimeError(
+                "REAL_PROVIDER_PREFLIGHT_FAILED: "
+                + str(result.envelope.diagnostics or result.receipt.details)
+            )
+        if not str(result.envelope.text or "").strip():
+            raise RuntimeError("REAL_PROVIDER_PREFLIGHT_FAILED: empty model response")
+        return {
+            "status": result.receipt.status.value,
+            "provider_id": result.envelope.provider_id,
+            "model_id": result.envelope.model_id,
+            "response_chars": len(result.envelope.text),
+            "route_failures": tuple(result.envelope.route_failures),
+        }
+
+    def _run_production_rag_probe(self) -> dict[str, Any]:
+        import sys
+
+        module = sys.modules.get("memory.memory_manager")
+        if module is None:
+            raise RuntimeError(
+                "RAG_PREFLIGHT_FAILED: production memory.memory_manager donor is not loaded"
+            )
+        manager = module.MemoryManager(
+            user_id=self.primary_user_id,
+            session_id="monster-rag-preflight",
+        )
+        retriever = getattr(manager, "rag_retriever", None)
+        if retriever is None:
+            raise RuntimeError(
+                "RAG_PREFLIGHT_FAILED: production RAGRetriever did not initialize"
+            )
+        embedding_manager = getattr(retriever, "embedding_manager", None)
+        vector_store = getattr(retriever, "vector_store", None)
+        if embedding_manager is None or vector_store is None:
+            raise RuntimeError(
+                "RAG_PREFLIGHT_FAILED: retriever is missing embedding/vector dependencies"
+            )
+
+        embedding = embedding_manager.generate_embedding("Nexus RAG acceptance preflight")
+        if not embedding:
+            raise RuntimeError(
+                "RAG_PREFLIGHT_FAILED: nomic-embed-text returned no embedding"
+            )
+        collection = vector_store.get_or_create_collection("conversations")
+        if collection is None:
+            raise RuntimeError(
+                "RAG_PREFLIGHT_FAILED: Chroma conversations collection is unavailable"
+            )
+        return {
+            "rag_initialized": True,
+            "embedding_dimensions": len(embedding),
+            "conversation_vectors": int(collection.count()),
+            "embedding_url": str(getattr(embedding_manager, "ollama_url", "")),
+        }
 
     def start(self) -> None:
         if self._assembled is not None:
@@ -250,6 +343,10 @@ class KernelizedMonsterRuntimeAdapter:
             raise RuntimeError(
                 "REAL_PROVIDER_REQUIRED: assembled runtime resolved a fake provider"
             )
+
+        self._provider_probe = self._run_real_provider_probe(assembled)
+        self._rag_probe = self._run_production_rag_probe()
+
         self._assembled = assembled
         self._app = app
         self._client = _InProcessASGIClient(app)
@@ -263,6 +360,8 @@ class KernelizedMonsterRuntimeAdapter:
         self._client = None
         self._app = None
         self._assembled = None
+        self._provider_probe = {}
+        self._rag_probe = {}
 
     def restart(self) -> None:
         self.close()
@@ -353,6 +452,8 @@ class KernelizedMonsterRuntimeAdapter:
                 and "fake" not in str(getattr(provider, "provider_id", "")).casefold()
                 and "fake" not in str(getattr(provider, "model_id", "")).casefold()
             ),
+            "provider_probe": dict(self._provider_probe),
+            "rag_probe": dict(self._rag_probe),
         }
 
     def direct_readiness_probe(self) -> Mapping[str, Any]:
