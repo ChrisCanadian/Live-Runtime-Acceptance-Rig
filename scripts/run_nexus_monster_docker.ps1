@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "a0dd72af420f3d4c28f7d689f3289d8766149b58"
+$NDKA_SHA = "c8fd53b8e887ea7ac2ecd9826a54dda3d265f9dd"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "48932a94a58f24f54b2fbe81c9d400ddb32f82ed"
 
@@ -57,7 +57,7 @@ Write-Host "Execution:      LOCAL DOCKER / LIVE TERMINAL STREAM" -ForegroundColo
 Write-Host "Evidence mode:  $EvidenceMode" -ForegroundColor Yellow
 Write-Host "NDKA:           $NDKA_SHA"
 Write-Host "Production:     $PRODUCTION_SHA"
-Write-Host "V5:             $V5_SHA"
+Write-Host "V5 donor ref:   $V5_SHA (build/schema donor only; runtime uses staged in-repo snapshot)"
 Write-Host "Legacy source:  $LegacyDb"
 Write-Host ""
 Write-Host "GREEN means all required flight controls actually executed and passed." -ForegroundColor Yellow
@@ -143,7 +143,7 @@ $dockerArgs = @(
     "--security-opt", "no-new-privileges:true",
     "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
     "-e", "NEXUS_RIG_PRODUCTION_CHECKOUT=/production",
-    "-e", "NEXUS_RIG_V5_CHECKOUT=/v5",
+    "-e", "NEXUS_RIG_V5_CHECKOUT=STAGED",
     "-e", "NEXUS_RIG_LEGACY_DB_PATH=/run/state/legacy.sqlite",
     "-e", "NEXUS_RIG_ARTIFACT_PATH=/run/artifacts",
     "-e", "NEXUS_RIG_RUNTIME_PROFILE=development_fixture",
@@ -159,7 +159,6 @@ $dockerArgs = @(
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
     "--mount", "type=bind,source=$ProductionRoot,target=/production,readonly",
-    "--mount", "type=bind,source=$V5Root,target=/v5,readonly",
     "--mount", "type=bind,source=$RunRoot,target=/run",
     $ImageTag,
     "--config", "/run/nexus-monster.env",
