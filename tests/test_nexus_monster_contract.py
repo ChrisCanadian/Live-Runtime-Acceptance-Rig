@@ -97,3 +97,31 @@ def test_monster_real_llm_lane_fails_closed_on_fake_provider():
     assert "reset --hard $Sha" in launcher
     assert "check-attr text" in launcher
     assert "text: unset$" in launcher
+    assert "materialize_ndka_staged_v5_exact.py" in launcher
+    assert "Staged V5 host bytes: VERIFIED" in launcher
+
+
+
+def test_monster_declares_exact_check_level_plan():
+    registered = cases.register_cases(None)
+    planned = [
+        (case.suite, name)
+        for case in registered
+        for name in tuple(getattr(case, "planned_checks", ()))
+    ]
+    assert len(planned) == 49
+    assert len(set(planned)) == 49
+
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    observed_literal_checks = source.count("_check(") - 1
+    assert observed_literal_checks == 49
+
+
+def test_monster_reporter_distinguishes_not_run_checks_from_stages():
+    reporter = (
+        Path(__file__).parents[1] / "scripts" / "report_nexus_monster_incomplete.py"
+    ).read_text(encoding="utf-8")
+    assert "Not run checks:" in reporter
+    assert "Not run stages:" in reporter
+    assert "MONSTER ACCEPTANCE CHECKS NOT RUN" in reporter
+    assert "MONSTER FLIGHT-CONTROL STAGES NOT REACHED" in reporter
