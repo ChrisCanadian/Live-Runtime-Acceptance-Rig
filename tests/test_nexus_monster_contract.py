@@ -99,6 +99,10 @@ def test_monster_real_llm_lane_fails_closed_on_fake_provider():
     assert "text: unset$" in launcher
     assert "materialize_ndka_staged_v5_exact.py" in launcher
     assert "Staged V5 host bytes: VERIFIED" in launcher
+    assert "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434" in launcher
+    assert "target=/production/data" in launcher
+    assert "RAG embedding host: VERIFIED" in launcher
+    assert "--production-checkout $ProductionRoot" in launcher
 
 
 
@@ -109,12 +113,12 @@ def test_monster_declares_exact_check_level_plan():
         for case in registered
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(planned) == 49
-    assert len(set(planned)) == 49
+    assert len(planned) == 52
+    assert len(set(planned)) == 52
 
     source = Path(cases.__file__).read_text(encoding="utf-8")
     observed_literal_checks = source.count("_check(") - 1
-    assert observed_literal_checks == 49
+    assert observed_literal_checks == 52
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -125,3 +129,20 @@ def test_monster_reporter_distinguishes_not_run_checks_from_stages():
     assert "Not run stages:" in reporter
     assert "MONSTER ACCEPTANCE CHECKS NOT RUN" in reporter
     assert "MONSTER FLIGHT-CONTROL STAGES NOT REACHED" in reporter
+
+
+
+def test_monster_inventory_requires_live_provider_and_rag_preflights():
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    adapter = (
+        Path(__file__).parents[1]
+        / "src"
+        / "live_runtime_rig_nexus_monster"
+        / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+    assert "Real provider completes an external inference preflight" in source
+    assert "Production RAG retriever initializes against isolated Chroma state" in source
+    assert "RAG embedding endpoint returns a real vector" in source
+    assert "_run_real_provider_probe" in adapter
+    assert "_run_production_rag_probe" in adapter
+    assert "RAG_PREFLIGHT_FAILED" in adapter
