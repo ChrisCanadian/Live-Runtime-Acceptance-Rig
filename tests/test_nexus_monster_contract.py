@@ -78,7 +78,7 @@ def test_monster_local_debug_is_default_and_public_safe_is_explicit():
 
 def test_monster_preserves_exact_authority_pins():
     launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
-    assert "2f441c5d6a4bf78524d51a78c0d9b9976a1d42fe" in launcher
+    assert "be0e3d8489fec29cb870288644743e39bffe15f1" in launcher
     assert "2514a11366f8e7f345bb854c0cfaee8c7b40dddd" in launcher
     assert "48932a94a58f24f54b2fbe81c9d400ddb32f82ed" in launcher
     assert "c612" not in launcher
@@ -136,7 +136,7 @@ def test_monster_reporter_distinguishes_not_run_checks_from_stages():
 
 
 
-def test_monster_requires_live_nlp_and_forbids_static_defaults():
+def test_monster_requires_full_local_nlp_and_forbids_lightweight_defaults():
     source = Path(cases.__file__).read_text(encoding="utf-8")
     adapter = (
         Path(__file__).parents[1]
@@ -149,16 +149,28 @@ def test_monster_requires_live_nlp_and_forbids_static_defaults():
         / "scripts"
         / "run_nexus_monster_docker.ps1"
     ).read_text(encoding="utf-8")
+    dockerfile = (
+        Path(__file__).parents[1]
+        / "containers"
+        / "Dockerfile.ndka-full-monster-real"
+    ).read_text(encoding="utf-8")
     assert "Production AnalysisManager performs live NLP classification" in source
     assert "Production NLP returns non-static intent evidence" in source
     assert "_run_production_analysis_probe" in adapter
     assert "ANALYSIS_PREFLIGHT_FAILED" in adapter
+    assert '"source": "production_full_nlp_local"' in adapter
     assert '"static_defaults": False' in adapter
-    assert "Require-ProductionNlpConfiguration" in launcher
-    assert '"-e", "HF_API_TOKEN"' in launcher
-    assert '"-e", "NLP_ZERO_SHOT_API=huggingface"' in launcher
-    assert '"-e", "NLP_EMOTION_API=huggingface"' in launcher
-    assert "Static AnalysisManager defaults are forbidden" in launcher
+    assert '"hf_inference_api_used": False' in adapter
+    assert "Assert-LocalProductionNlpConfiguration" in launcher
+    assert '"-e", "NLP_ENABLED=true"' in launcher
+    assert '"-e", "NLP_ZERO_SHOT_API=local"' in launcher
+    assert '"-e", "NLP_EMOTION_API=local"' in launcher
+    assert '"-e", "HF_HUB_OFFLINE=1"' in launcher
+    assert '"-e", "TRANSFORMERS_OFFLINE=1"' in launcher
+    assert '"-e", "HF_API_TOKEN"' not in launcher
+    assert 'snapshot_download(repo_id="facebook/bart-large-mnli")' in dockerfile
+    assert 'snapshot_download(repo_id="j-hartmann/emotion-english-distilroberta-base")' in dockerfile
+    assert 'stanza.download(' in dockerfile
 
 
 def test_monster_inventory_requires_live_provider_and_rag_preflights():
