@@ -232,3 +232,28 @@ def test_monster_kernel_status_assertions_follow_canonical_lowercase_values():
     assert '.get("receipt_status") == "OK"' not in source
     assert '.get("snapshot_status") == "OK"' not in source
     assert '.get("verify_status") == "OK"' not in source
+
+
+
+def test_monster_fault_controls_are_commissioned_through_real_manager_boundaries():
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    adapter = (
+        Path(__file__).parents[1]
+        / "src"
+        / "live_runtime_rig_nexus_monster"
+        / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+
+    assert "Provider backend timeout becomes a bounded FAILED receipt" in source
+    assert "Tool timeout remains terminal and non-success" in source
+    assert "Forged evidence declaration is rejected before proof authority" in source
+    assert "TEST REQUIRED: no runtime fault-injection control exposed" not in source
+
+    assert "exercise_fault_boundary" in adapter
+    assert "acceptance injected provider timeout" in adapter
+    assert '"status": "TIMED_OUT"' in adapter
+    assert "declared_tool_status_not_evidence" not in adapter
+    assert "assembled.host.registry.get("nexus.provider")" in adapter
+    assert "assembled.host.registry.get("nexus.tools")" in adapter
+    assert "assembled.host.registry.get("nexus.evidence")" in adapter
+    assert "finally:" in adapter
