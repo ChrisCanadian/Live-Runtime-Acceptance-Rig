@@ -56,6 +56,9 @@ class FlightControlInventoryCase:
         "Primary acceptance subject is production UserID 18",
         "Monster runtime is using a REAL provider, not the deterministic fixture",
         "Resolved model identity is reported for the real provider",
+        "Real provider completes an external inference preflight",
+        "Production RAG retriever initializes against isolated Chroma state",
+        "RAG embedding endpoint returns a real vector",
     )
     name = "monster-flight-control-inventory"
     suite = "01 FLIGHT CONTROL INVENTORY"
@@ -81,6 +84,27 @@ class FlightControlInventoryCase:
                 "real_provider": health.get("real_provider"),
             }),
             _check("Resolved model identity is reported for the real provider", bool(str(health.get("model_id") or "").strip()), "non-empty model_id", health.get("model_id")),
+            _check(
+                "Real provider completes an external inference preflight",
+                (health.get("provider_probe") or {}).get("status") == "OK"
+                and bool((health.get("provider_probe") or {}).get("provider_id"))
+                and bool((health.get("provider_probe") or {}).get("model_id"))
+                and int((health.get("provider_probe") or {}).get("response_chars") or 0) > 0,
+                "real external inference returns OK + provider/model + text",
+                health.get("provider_probe"),
+            ),
+            _check(
+                "Production RAG retriever initializes against isolated Chroma state",
+                (health.get("rag_probe") or {}).get("rag_initialized") is True,
+                True,
+                health.get("rag_probe"),
+            ),
+            _check(
+                "RAG embedding endpoint returns a real vector",
+                int((health.get("rag_probe") or {}).get("embedding_dimensions") or 0) > 0,
+                ">0 embedding dimensions",
+                health.get("rag_probe"),
+            ),
         ]
         return CaseResult(checks=checks, evidence={"health": health})
 
