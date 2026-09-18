@@ -124,7 +124,7 @@ def test_early_database_failure_still_writes_complete_evidence(tmp_path) -> None
     assert run["framework_status"] == "COMPLETED"
     assert run["acceptance_status"] == "FAIL"
     assert run["summary"]["failed"] == 1
-    assert run["summary"]["not_run"] == 3
+    assert run["summary"]["not_run"] == 7
     error = json.loads(
         (runner.evidence.root / "errors" / "database_preflight.json").read_text(
             encoding="utf-8"
