@@ -274,10 +274,16 @@ class KernelizedMonsterRuntimeAdapter:
             raise RuntimeError(
                 "RAG_PREFLIGHT_FAILED: Chroma conversations collection is unavailable"
             )
+        semantic = vector_store.search_conversations(
+            user_id=self.primary_user_id,
+            query_embedding=embedding,
+            n_results=3,
+        )
         return {
             "rag_initialized": True,
             "embedding_dimensions": len(embedding),
             "conversation_vectors": int(collection.count()),
+            "user18_semantic_matches": len(semantic),
             "embedding_url": str(getattr(embedding_manager, "ollama_url", "")),
         }
 
