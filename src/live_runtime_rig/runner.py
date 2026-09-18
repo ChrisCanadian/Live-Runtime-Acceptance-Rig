@@ -99,6 +99,7 @@ class RigRunner:
         self._executed_acceptance_checks = 0
         self._planned_cases: tuple[tuple[str, str], ...] = ()
         self._planned_check_keys: tuple[tuple[str, str], ...] = ()
+        self._fallback_planned_cases: tuple[tuple[str, str], ...] = ()
         self._executed_cases: set[tuple[str, str]] = set()
         self._result_code = "PASS"
 
@@ -262,16 +263,19 @@ class RigRunner:
 
         self._planned_cases = tuple((case.suite, case.name) for case in cases)
         planned_check_keys: list[tuple[str, str]] = []
+        fallback_planned_cases: list[tuple[str, str]] = []
         for case in cases:
             declared = tuple(getattr(case, "planned_checks", ()) or ())
             if declared:
                 planned_check_keys.extend((case.suite, str(name)) for name in declared)
             else:
                 # Generic/application-neutral cases may not expose check-level
-                # planning metadata. Preserve backward compatibility by treating
-                # the case itself as one planned acceptance unit.
-                planned_check_keys.append((case.suite, case.name))
+                # planning metadata. Preserve their historical case-level
+                # accounting instead of inventing names that can never appear
+                # in the assertion ledger.
+                fallback_planned_cases.append((case.suite, case.name))
         self._planned_check_keys = tuple(planned_check_keys)
+        self._fallback_planned_cases = tuple(fallback_planned_cases)
 
         evidence_names: dict[str, str] = {}
         for case in cases:
@@ -578,6 +582,12 @@ class RigRunner:
         for suite, name in self._planned_check_keys:
             if (suite, name) not in observed:
                 not_run.append({"kind": "acceptance_check", "suite": suite, "name": name})
+
+        for suite, case_name in self._fallback_planned_cases:
+            if (suite, case_name) not in self._executed_cases:
+                not_run.append(
+                    {"kind": "acceptance_case", "suite": suite, "name": case_name}
+                )
 
         protected_key = ("PROTECTED STATE", "Protected state remained unchanged")
         protected_fallback = ("PROTECTED STATE", "Protected state comparison completed")
