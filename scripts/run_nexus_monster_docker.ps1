@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "2f441c5d6a4bf78524d51a78c0d9b9976a1d42fe"
+$NDKA_SHA = "be0e3d8489fec29cb870288644743e39bffe15f1"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "48932a94a58f24f54b2fbe81c9d400ddb32f82ed"
 
@@ -78,31 +78,12 @@ function Require-RealProviderConfiguration {
     throw "Unsupported real Monster provider kind: $Kind"
 }
 
-function Require-ProductionNlpConfiguration {
-    param([Parameter(Mandatory = $true)][hashtable]$DotEnv)
-
-    $token = [Environment]::GetEnvironmentVariable("HF_API_TOKEN")
-    if (-not $token) { $token = [Environment]::GetEnvironmentVariable("HUGGINGFACE_API_KEY") }
-    if (-not $token) { $token = [Environment]::GetEnvironmentVariable("HF_TOKEN") }
-    if (-not $token -and $DotEnv.ContainsKey("HF_API_TOKEN")) {
-        $token = $DotEnv["HF_API_TOKEN"]
-    }
-    if (-not $token -and $DotEnv.ContainsKey("HUGGINGFACE_API_KEY")) {
-        $token = $DotEnv["HUGGINGFACE_API_KEY"]
-    }
-    if (-not $token -and $DotEnv.ContainsKey("HF_TOKEN")) {
-        $token = $DotEnv["HF_TOKEN"]
-    }
-
-    if (-not $token) {
-        throw "Full Monster requires live production NLP classification, but no Hugging Face token was found. Static AnalysisManager defaults are forbidden in this lane."
-    }
-
-    $env:HF_API_TOKEN = $token
-    $env:NLP_ENABLED = "false"
-    $env:NLP_ZERO_SHOT_API = "huggingface"
-    $env:NLP_EMOTION_API = "huggingface"
-    Write-Host "NLP analyzer: VERIFIED (HF lightweight production path; static defaults forbidden)" -ForegroundColor DarkGray
+function Assert-LocalProductionNlpConfiguration {
+    # The Monster is a local full-runtime acceptance lane. It exercises the
+    # complete production NLP pipeline locally from image-baked assets:
+    # Stanza + BART zero-shot + DistilRoBERTa emotion + VADER. APIFree.ai is
+    # reserved for the actual response-model inference role.
+    Write-Host "NLP analyzer: VERIFIED (full local production pipeline; no HF inference API)" -ForegroundColor DarkGray
 }
 
 function Ensure-ExactCheckout {
@@ -173,7 +154,7 @@ Write-Host "RAG embedding host: VERIFIED (nomic-embed-text)" -ForegroundColor Da
 
 $ProviderEnv = Read-DotEnv -Path $ProviderEnvFile
 Require-RealProviderConfiguration -DotEnv $ProviderEnv -Kind $ProviderKind
-Require-ProductionNlpConfiguration -DotEnv $ProviderEnv
+Assert-LocalProductionNlpConfiguration
 
 & gh auth status *> $null
 if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not authenticated." }
@@ -321,10 +302,14 @@ $dockerArgs = @(
     "-e", "NEXUS_RIG_MONSTER_PERMISSIONS=tools:calculate,tools:read,artifacts:create,artifacts:read,jobs:create,jobs:read",
     "-e", "NEXUS_DEPLOYMENT_ID=local-monster-$RunId",
     "-e", "NEXUS_RUNTIME_VERSION=ndka-monster-$NDKA_SHA",
-    "-e", "NLP_ENABLED=false",
-    "-e", "NLP_ZERO_SHOT_API=huggingface",
-    "-e", "NLP_EMOTION_API=huggingface",
-    "-e", "HF_API_TOKEN",
+    "-e", "NLP_ENABLED=true",
+    "-e", "NLP_ZERO_SHOT_API=local",
+    "-e", "NLP_EMOTION_API=local",
+    "-e", "NLP_USE_CPU_ONLY=true",
+    "-e", "NLP_BART_USE_GPU=false",
+    "-e", "NLP_OTHER_USE_CPU=true",
+    "-e", "HF_HUB_OFFLINE=1",
+    "-e", "TRANSFORMERS_OFFLINE=1",
     "-e", "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434",
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
