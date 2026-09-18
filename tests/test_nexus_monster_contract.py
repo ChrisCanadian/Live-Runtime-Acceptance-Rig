@@ -94,7 +94,7 @@ def test_monster_real_llm_lane_fails_closed_on_fake_provider():
     assert "Monster runtime is using a REAL provider" in cases_source
     assert "Fake provider fallback is forbidden in this lane." in launcher
     assert "RIG_NETWORK_REQUIRED=true" in launcher
-    assert "reset --hard $Sha" in launcher
+    assert "reset --quiet --hard $Sha" in launcher
     assert "check-attr text" in launcher
     assert "text: unset$" in launcher
     assert "materialize_ndka_staged_v5_exact.py" in launcher
