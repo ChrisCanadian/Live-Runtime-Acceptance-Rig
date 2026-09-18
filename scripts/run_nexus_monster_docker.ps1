@@ -206,14 +206,35 @@ $PrepExitCode = $LASTEXITCODE
 $PrepOutput | ForEach-Object { Write-Host $_ }
 if ($PrepExitCode -ne 0) { throw "Failed to create Monster state copies." }
 
-$ProductionDataRoot = Join-Path $StateRoot "production-data"
+# Build a disposable, self-contained production checkout for the Monster.
+# Production memory code resolves its Chroma path relative to the production
+# checkout itself. Mounting /production read-only and then trying to overlay
+# /production/data is not portable on Docker Desktop: runc must create the
+# nested mountpoint inside the read-only parent and fails before the container
+# starts. A disposable clone keeps the pinned donor source immutable while
+# giving only the Monster-owned copy a writable data directory.
+$ProductionRuntimeRoot = Join-Path $StateRoot "production-runtime"
+Write-Host "Creating disposable production runtime checkout ..." -ForegroundColor DarkGray
+Invoke-Checked -Command {
+    git clone --quiet --no-hardlinks $ProductionRoot $ProductionRuntimeRoot
+} -Failure "Failed to create disposable production runtime checkout."
+Invoke-Checked -Command {
+    git -C $ProductionRuntimeRoot checkout --quiet --detach $PRODUCTION_SHA
+} -Failure "Failed to pin disposable production runtime checkout."
+$RuntimeProductionSha = (git -C $ProductionRuntimeRoot rev-parse HEAD).Trim()
+if ($RuntimeProductionSha -ne $PRODUCTION_SHA) {
+    throw "Disposable production runtime checkout mismatch. Expected $PRODUCTION_SHA, observed $RuntimeProductionSha"
+}
+
+$ProductionDataRoot = Join-Path $ProductionRuntimeRoot "data"
 $StateChroma = Join-Path $ProductionDataRoot "chroma_db"
 New-Item -ItemType Directory -Force -Path $ProductionDataRoot | Out-Null
-Write-Host "Copying production ChromaDB into disposable Monster state ..." -ForegroundColor DarkGray
+Write-Host "Copying production ChromaDB into disposable Monster runtime ..." -ForegroundColor DarkGray
 Copy-Item -Path $LegacyChromaDir -Destination $StateChroma -Recurse -Force
 if (-not (Test-Path $StateChroma -PathType Container)) {
     throw "Disposable ChromaDB copy was not created."
 }
+Write-Host "Disposable production runtime: VERIFIED ($RuntimeProductionSha)" -ForegroundColor DarkGray
 Write-Host "RAG state copy: VERIFIED ($StateChroma)" -ForegroundColor DarkGray
 
 $ConfigPath = Join-Path $RunRoot "nexus-monster.env"
@@ -276,8 +297,7 @@ $dockerArgs = @(
     "-e", "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434",
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
-    "--mount", "type=bind,source=$ProductionRoot,target=/production,readonly",
-    "--mount", "type=bind,source=$ProductionDataRoot,target=/production/data",
+    "--mount", "type=bind,source=$ProductionRuntimeRoot,target=/production",
     "--mount", "type=bind,source=$RunRoot,target=/run",
     $ImageTag,
     "--config", "/run/nexus-monster.env",
@@ -322,6 +342,18 @@ try {
 } finally {
     $env:PYTHONPATH = $OldPythonPath
 }
+
+# Re-verify that the pinned cached donor checkout was not modified while the
+# writable disposable runtime clone was in use.
+$CachedProductionSha = (git -C $ProductionRoot rev-parse HEAD).Trim()
+$CachedProductionDirty = @(git -C $ProductionRoot status --porcelain)
+if ($CachedProductionSha -ne $PRODUCTION_SHA) {
+    throw "Pinned production donor checkout moved during Monster execution."
+}
+if ($CachedProductionDirty.Count -ne 0) {
+    throw "Pinned production donor checkout was modified during Monster execution."
+}
+Write-Host "Production donor immutability: VERIFIED" -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Cyan
