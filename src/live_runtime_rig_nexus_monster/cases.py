@@ -103,12 +103,14 @@ class FlightControlInventoryCase:
             _check(
                 "Production AnalysisManager performs live NLP classification",
                 _status_ok((health.get("analysis_probe") or {}).get("status"))
-                and (health.get("analysis_probe") or {}).get("source") == "hf_api_lightweight"
-                and (health.get("analysis_probe") or {}).get("static_defaults") is False,
+                and (health.get("analysis_probe") or {}).get("source") == "production_full_nlp_local"
+                and (health.get("analysis_probe") or {}).get("static_defaults") is False
+                and (health.get("analysis_probe") or {}).get("hf_inference_api_used") is False,
                 {
                     "status": "ok",
-                    "source": "hf_api_lightweight",
+                    "source": "production_full_nlp_local",
                     "static_defaults": False,
+                    "hf_inference_api_used": False,
                 },
                 health.get("analysis_probe"),
             ),
