@@ -1,9 +1,11 @@
 """Surface-neutral monster acceptance adapter for kernelized Nexus Synapse.
 
-Unlike the Discord surface adapter, this target enters the runtime through the
-canonical /v1/chat/completions boundary exposed by NDKA. It never calls a
-kernel specialist directly. The adapter records public-safe receipt metadata
-from every turn so the campaign can prove which flight controls actually ran.
+Unlike the Discord surface adapter, this target enters ordinary turns through
+the canonical /v1/chat/completions boundary exposed by NDKA. Dedicated
+department-boundary acceptance probes may call a registered public kernel
+manager, but never a specialist or donor implementation directly. The adapter
+records public-safe receipt metadata with the evidence source so the campaign
+can distinguish canonical-turn participation from bounded manager exercise.
 """
 
 from __future__ import annotations
@@ -144,7 +146,12 @@ class KernelizedMonsterRuntimeAdapter:
         self._operation_coverage: dict[str, dict[str, int]] = {
             kernel_id: {} for kernel_id in REQUIRED_KERNEL_IDS
         }
+        self._coverage_sources: dict[str, dict[str, int]] = {
+            kernel_id: {"canonical_turn": 0, "boundary_probe": 0}
+            for kernel_id in REQUIRED_KERNEL_IDS
+        }
         self._turns: list[dict[str, Any]] = []
+        self._boundary_events: list[dict[str, Any]] = []
         self._provider_probe: dict[str, Any] = {}
         self._rag_probe: dict[str, Any] = {}
 
@@ -383,17 +390,30 @@ class KernelizedMonsterRuntimeAdapter:
         raw = payload.get("receipts") or ()
         return tuple(item for item in raw if isinstance(item, Mapping))
 
+    def _record_coverage(
+        self,
+        *,
+        kernel_id: str,
+        operation: str,
+        source: str,
+    ) -> None:
+        if kernel_id not in self._coverage:
+            return
+        self._coverage[kernel_id] += 1
+        if operation:
+            bucket = self._operation_coverage[kernel_id]
+            bucket[operation] = bucket.get(operation, 0) + 1
+        sources = self._coverage_sources[kernel_id]
+        sources[source] = sources.get(source, 0) + 1
+
     def _observe_payload(self, payload: Mapping[str, Any]) -> None:
         receipts = self._public_receipts(payload)
         for receipt in receipts:
-            kernel_id = str(receipt.get("kernel_id") or "")
-            operation = str(receipt.get("operation") or "")
-            if kernel_id not in self._coverage:
-                continue
-            self._coverage[kernel_id] += 1
-            if operation:
-                bucket = self._operation_coverage[kernel_id]
-                bucket[operation] = bucket.get(operation, 0) + 1
+            self._record_coverage(
+                kernel_id=str(receipt.get("kernel_id") or ""),
+                operation=str(receipt.get("operation") or ""),
+                source="canonical_turn",
+            )
         self._turns.append(
             {
                 "state": payload.get("state"),
@@ -406,6 +426,253 @@ class KernelizedMonsterRuntimeAdapter:
                 ),
             }
         )
+
+    def _observe_boundary_result(self, result: Any, *, label: str) -> None:
+        receipt = getattr(result, "receipt", None)
+        if receipt is None:
+            raise RuntimeError(f"{label} returned no KernelReceipt")
+        kernel_id = str(getattr(receipt, "kernel_id", "") or "")
+        operation = str(getattr(receipt, "operation", "") or "")
+        status = getattr(getattr(receipt, "status", None), "value", None) or str(
+            getattr(receipt, "status", "")
+        )
+        self._record_coverage(
+            kernel_id=kernel_id,
+            operation=operation,
+            source="boundary_probe",
+        )
+        self._boundary_events.append(
+            {
+                "label": label,
+                "kernel_id": kernel_id,
+                "operation": operation,
+                "status": status,
+                "state_mutated": bool(getattr(receipt, "state_mutated", False)),
+            }
+        )
+
+    def _boundary_context(self, *, label: str):
+        from nexus_ndka.runtime.contracts import RuntimeContext
+
+        return RuntimeContext(
+            request_id=f"monster-boundary:{label}",
+            turn_id=f"monster-boundary:{label}",
+            actor_id=str(self.primary_user_id),
+            scope_id=str(self.primary_user_id),
+            session_id=f"monster-boundary:{label}",
+            metadata={
+                "acceptance_boundary_probe": True,
+                "owner_key": self.primary_owner_key,
+                "trusted_permissions": tuple(sorted(self.permissions)),
+            },
+        )
+
+    def exercise_kernel_boundary(self, kernel_id: str, *, marker: str) -> Mapping[str, Any]:
+        """Exercise a registered public manager at its owning responsibility.
+
+        This is not evidence that the department participates in every chat turn.
+        It proves only that the assembled host can execute the kernel's public
+        contract against disposable Monster state. Cross-kernel caller wiring is
+        reported separately and must not be inferred from this probe.
+        """
+
+        assembled, _ = self._require_started()
+        manager = assembled.host.registry.get(kernel_id)
+        context = self._boundary_context(label=f"{kernel_id}:{marker}")
+
+        if kernel_id == "nexus.cognition":
+            from nexus_ndka.kernels.cognition import CognitionOperation, CognitionRequest
+
+            result = asyncio.run(
+                manager.execute(
+                    CognitionRequest(
+                        operation=CognitionOperation.NODE_PROJECTION,
+                        user_id=self.primary_user_id,
+                        nlp_analysis={
+                            "overall": {
+                                "primary_intent": "question",
+                                "primary_topic": "acceptance",
+                            }
+                        },
+                        mode_node_affinities=(),
+                        mood_state={},
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(result, label="cognition.node_projection")
+            return {
+                "kernel_id": kernel_id,
+                "receipt_status": result.receipt.status.value,
+                "operation": result.receipt.operation,
+                "node_count": len(result.envelope.node_activations),
+                "advisory_chars": len(result.envelope.node_prompt_text or ""),
+                "state_mutated": result.receipt.state_mutated,
+            }
+
+        if kernel_id == "nexus.continuity":
+            from nexus_ndka.kernels.continuity import (
+                ContinuityOperation,
+                ContinuityRequest,
+            )
+
+            created = asyncio.run(
+                manager.execute(
+                    ContinuityRequest(
+                        operation=ContinuityOperation.CREATE_PIN,
+                        content=f"Monster continuity boundary {marker}",
+                        pin_type="CONTEXT",
+                        source_type="ACCEPTANCE",
+                        source_ref=context.turn_id,
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(created, label="continuity.create_pin")
+            snapshot = asyncio.run(
+                manager.execute(
+                    ContinuityRequest(operation=ContinuityOperation.SNAPSHOT),
+                    context,
+                )
+            )
+            self._observe_boundary_result(snapshot, label="continuity.snapshot")
+            pins = tuple((snapshot.envelope.snapshot or {}).get("pins") or ())
+            return {
+                "kernel_id": kernel_id,
+                "receipt_status": created.receipt.status.value,
+                "snapshot_status": snapshot.receipt.status.value,
+                "pin_id": created.envelope.pin_id,
+                "snapshot_pin_count": len(pins),
+                "state_mutated": created.receipt.state_mutated,
+            }
+
+        if kernel_id == "nexus.learning":
+            from nexus_ndka.kernels.learning import LearningOperation, LearningRequest
+
+            result = asyncio.run(
+                manager.execute(
+                    LearningRequest(
+                        operation=LearningOperation.SCAN_DIRECT_FEEDBACK,
+                        text="Please stop using emoji and get to the point.",
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(result, label="learning.scan_direct_feedback")
+            return {
+                "kernel_id": kernel_id,
+                "receipt_status": result.receipt.status.value,
+                "operation": result.receipt.operation,
+                "observation_count": len(result.envelope.observations),
+                "state_mutated": result.receipt.state_mutated,
+            }
+
+        if kernel_id == "nexus.jobs":
+            from nexus_ndka.kernels.jobs import JobOperation, JobRequest
+
+            enqueued = asyncio.run(
+                manager.execute(
+                    JobRequest(
+                        operation=JobOperation.ENQUEUE,
+                        job_type="THINKER_OBSERVATION",
+                        handler_version="1.0.0",
+                        payload={"summary": f"bounded Monster job {marker}"},
+                        idempotency_key=f"monster:{marker}:jobs",
+                        owner_scope_type="USER",
+                        owner_scope_id=context.scope_id,
+                        max_attempts=3,
+                        backoff_base_seconds=2,
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(enqueued, label="jobs.enqueue")
+            snapshot = asyncio.run(
+                manager.execute(
+                    JobRequest(
+                        operation=JobOperation.SNAPSHOT,
+                        job_id=enqueued.envelope.job_id,
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(snapshot, label="jobs.snapshot")
+            return {
+                "kernel_id": kernel_id,
+                "receipt_status": enqueued.receipt.status.value,
+                "snapshot_status": snapshot.receipt.status.value,
+                "job_id": enqueued.envelope.job_id,
+                "job_status": enqueued.envelope.status,
+                "state_mutated": enqueued.receipt.state_mutated,
+            }
+
+        if kernel_id == "nexus.artifacts":
+            from nexus_ndka.kernels.artifacts import ArtifactOperation, ArtifactRequest
+
+            created = asyncio.run(
+                manager.execute(
+                    ArtifactRequest(
+                        operation=ArtifactOperation.CREATE,
+                        artifact_type="ACCEPTANCE_TEXT",
+                        media_type="text/plain",
+                        content=f"ACCEPTANCE_ARTIFACT::{marker}".encode("utf-8"),
+                        metadata={"source": "monster_boundary_probe"},
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(created, label="artifacts.create")
+            descriptor = created.envelope.artifact
+            if descriptor is None:
+                raise RuntimeError("artifacts.create returned no descriptor")
+            verified = asyncio.run(
+                manager.execute(
+                    ArtifactRequest(
+                        operation=ArtifactOperation.VERIFY,
+                        artifact_id=descriptor.artifact_id,
+                        version=descriptor.version,
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(verified, label="artifacts.verify")
+            return {
+                "kernel_id": kernel_id,
+                "receipt_status": created.receipt.status.value,
+                "verify_status": verified.receipt.status.value,
+                "artifact_id": descriptor.artifact_id,
+                "artifact_version": descriptor.version,
+                "sha256": descriptor.sha256,
+                "verified": verified.envelope.verified,
+                "state_mutated": created.receipt.state_mutated,
+            }
+
+        if kernel_id == "nexus.surfaces":
+            from nexus_ndka.kernels.surfaces import SurfaceOperation, SurfaceRequest
+
+            result = asyncio.run(
+                manager.execute(
+                    SurfaceRequest(
+                        operation=SurfaceOperation.PROJECT_EVENT,
+                        event_type="acceptance.boundary",
+                        payload={"marker": marker, "user_id": self.primary_user_id},
+                        sequence=1,
+                        release_id=f"acceptance-release:{marker}",
+                    ),
+                    context,
+                )
+            )
+            self._observe_boundary_result(result, label="surfaces.project_event")
+            event = result.envelope.event
+            return {
+                "kernel_id": kernel_id,
+                "receipt_status": result.receipt.status.value,
+                "event_id": getattr(event, "event_id", None),
+                "replay_token": getattr(event, "replay_token", None),
+                "state_mutated": result.receipt.state_mutated,
+            }
+
+        raise ValueError(f"unsupported Monster boundary probe kernel: {kernel_id}")
 
     def chat(
         self,
@@ -475,8 +742,44 @@ class KernelizedMonsterRuntimeAdapter:
                 for kernel_id, values in self._operation_coverage.items()
             },
             "missing_kernel_receipts": missing,
+            "coverage_sources": {
+                kernel_id: dict(values)
+                for kernel_id, values in self._coverage_sources.items()
+            },
             "turn_count": len(self._turns),
             "turns": tuple(self._turns),
+            "boundary_events": tuple(self._boundary_events),
+            "wiring_classification": {
+                "canonical_chat_active": (
+                    "nexus.security",
+                    "nexus.analysis",
+                    "nexus.memory",
+                    "nexus.identity",
+                    "nexus.modes",
+                    "nexus.context",
+                    "nexus.tools",
+                    "nexus.provider",
+                    "nexus.evidence",
+                    "nexus.correction",
+                    "nexus.release",
+                ),
+                "owned_boundary_or_conditional": (
+                    "nexus.cognition",
+                    "nexus.continuity",
+                    "nexus.learning",
+                    "nexus.jobs",
+                    "nexus.artifacts",
+                    "nexus.surfaces",
+                ),
+                "known_test_required_edges": (
+                    "context_to_cognition_to_provider",
+                    "continuity_to_jobs_follow_up_enqueue",
+                    "tools_to_ndka_continuity_and_artifacts",
+                    "learning_post_turn_orchestration",
+                    "artifacts_to_surfaces_delivery",
+                    "release_outbox_to_surface_ordering",
+                ),
+            },
         }
 
     def request(self, method: str, path: str, **kwargs: Any):
