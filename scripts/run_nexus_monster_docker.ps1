@@ -150,6 +150,24 @@ if ($SnapshotAttribute -notmatch "text: unset$") {
 }
 Write-Host "Staged V5 byte policy: VERIFIED (-text)" -ForegroundColor DarkGray
 
+# Windows Git checkouts can retain CRLF worktree bytes even after the attribute
+# policy is corrected. Re-materialize the entire staged donor closure directly
+# from Git blob objects, then let the NDKA runtime verifier independently verify
+# the same bytes again inside Docker.
+$Materializer = Join-Path $RigRoot "scripts\materialize_ndka_staged_v5_exact.py"
+$MaterializeOutput = & python $Materializer --repo $NdkaRoot --commit $NDKA_SHA 2>&1
+$MaterializeExitCode = $LASTEXITCODE
+$MaterializeOutput | ForEach-Object { Write-Host $_ }
+if ($MaterializeExitCode -ne 0) {
+    throw "Failed to materialize byte-exact staged V5 snapshot."
+}
+$StagedSample = Join-Path $NdkaRoot "migration_staging\v5_snapshot\migrations\0001_core.sql"
+$StagedSampleBytes = (Get-Item $StagedSample).Length
+if ($StagedSampleBytes -ne 2203) {
+    throw "Staged V5 byte materialization failed host preflight. Expected 2203 bytes, observed $StagedSampleBytes."
+}
+Write-Host "Staged V5 host bytes: VERIFIED (0001_core.sql = 2203 bytes)" -ForegroundColor DarkGray
+
 $RunId = Get-Date -Format "yyyyMMdd_HHmmss"
 $RunRoot = Join-Path $RunsRoot ("monster_" + $RunId)
 $StateRoot = Join-Path $RunRoot "state"
