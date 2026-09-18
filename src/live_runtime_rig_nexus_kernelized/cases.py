@@ -113,8 +113,8 @@ class KernelizedReadinessCase:
         return CaseResult(checks=checks, evidence={"health": health, "inventory": inventory})
 
 
-class DiscordGuestFailClosedCase:
-    name = "discord-guest-fail-closed"
+class DiscordGuestBareInferenceCase:
+    name = "discord-guest-bare-inference"
     suite = "DISCORD AUTHORITY"
 
     def run(self, runtime, database, context) -> CaseResult:
@@ -126,26 +126,42 @@ class DiscordGuestFailClosedCase:
             json=_message(
                 external_user_id=guest_id,
                 message_id=f"{context.marker}-guest",
-                text="This unlinked acceptance identity must not gain durable authority.",
+                text="Reply briefly as an unregistered guest assistant.",
             ),
         )
         body = response.json()
+        metadata = body.get("metadata") or {}
         turn = body.get("governed_turn") or {}
         checks = [
             _check(
-                "Unlinked Discord identity is rejected before governed execution",
-                body.get("state") == "GUEST_RUNTIME_NOT_WIRED",
-                "GUEST_RUNTIME_NOT_WIRED",
-                body.get("state"),
+                "Unlinked Discord identity receives bare provider inference",
+                body.get("state") == "GUEST_LLM_RESPONSE" and bool(str(body.get("text") or "").strip()),
+                "GUEST_LLM_RESPONSE with non-empty model text",
+                {"state": body.get("state"), "has_text": bool(str(body.get("text") or "").strip())},
+            ),
+            _check(
+                "Guest path does not use personalized Nexus runtime",
+                metadata.get("nexus_personal_runtime_used") is False,
+                False,
+                metadata.get("nexus_personal_runtime_used"),
             ),
             _check(
                 "Guest path reports no durable user-state touch",
-                (body.get("metadata") or {}).get("durable_user_state_touched") is False,
+                metadata.get("durable_user_state_touched") is False,
                 False,
-                (body.get("metadata") or {}).get("durable_user_state_touched"),
+                metadata.get("durable_user_state_touched"),
             ),
             _check(
-                "Guest path produced no governed receipt chain",
+                "Guest path resolves installation-managed provider/model",
+                bool(metadata.get("provider_id")) and bool(metadata.get("model_id")),
+                "non-empty provider_id and model_id",
+                {
+                    "provider_id": metadata.get("provider_id"),
+                    "model_id": metadata.get("model_id"),
+                },
+            ),
+            _check(
+                "Guest path produced no governed Nexus turn receipt chain",
                 turn.get("available") is False,
                 False,
                 turn.get("available"),
@@ -456,7 +472,7 @@ class DeferredEdgesCase:
 def register_cases(_config: Any):
     return [
         KernelizedReadinessCase(),
-        DiscordGuestFailClosedCase(),
+        DiscordGuestBareInferenceCase(),
         DiscordGovernedTurnCase(),
         DiscordCommandsCase(),
         MultiTurnContinuityCase(),
