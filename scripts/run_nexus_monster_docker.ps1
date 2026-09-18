@@ -263,7 +263,7 @@ Write-Host "Building/reusing Linux dependency-parity image ..." -ForegroundColor
 Write-Host "Image: $ImageTag" -ForegroundColor DarkGray
 Invoke-Checked -Command {
     docker build `
-        --progress=plain `
+        --quiet `
         --build-context "v5=$V5Root" `
         --file $Dockerfile `
         --tag $ImageTag `
