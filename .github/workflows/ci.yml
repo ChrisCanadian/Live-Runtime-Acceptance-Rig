@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - integration/ndka-full-monster-20260918
   pull_request:
     branches:
       - main
