@@ -113,12 +113,12 @@ def test_monster_declares_exact_check_level_plan():
         for case in registered
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(planned) == 52
-    assert len(set(planned)) == 52
+    assert len(planned) == 53
+    assert len(set(planned)) == 53
 
     source = Path(cases.__file__).read_text(encoding="utf-8")
     observed_literal_checks = source.count("_check(") - 1
-    assert observed_literal_checks == 52
+    assert observed_literal_checks == 53
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -143,6 +143,7 @@ def test_monster_inventory_requires_live_provider_and_rag_preflights():
     assert "Real provider completes an external inference preflight" in source
     assert "Production RAG retriever initializes against isolated Chroma state" in source
     assert "RAG embedding endpoint returns a real vector" in source
+    assert "Production RAG returns UserID 18 semantic memory candidates" in source
     assert "_run_real_provider_probe" in adapter
     assert "_run_production_rag_probe" in adapter
     assert "RAG_PREFLIGHT_FAILED" in adapter
