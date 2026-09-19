@@ -108,7 +108,7 @@ function Ensure-ExactCheckout {
     if ($observed -ne $Sha) { throw "$Repository checkout mismatch. Expected $Sha, observed $observed" }
 }
 
-$EvidenceMode = if ($PublicSafe) { "PUBLIC-SAFE / REDACTED" } else { "LOCAL DEBUG / FULL TRACEBACK" }
+$EvidenceMode = if ($PublicSafe) { "PUBLIC-SAFE / REDACTED" } else { "LOCAL DEBUG / FULL EVIDENCE" }
 $PublicSafeValue = if ($PublicSafe) { "true" } else { "false" }
 
 Write-Host ""
@@ -161,7 +161,12 @@ if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not authenticated." }
 Write-Host "GitHub auth: VERIFIED" -ForegroundColor DarkGray
 Invoke-Checked -Command { git --version } -Failure "Git is not available on PATH."
 Invoke-Checked -Command { python --version } -Failure "Python is not available on PATH."
-Invoke-Checked -Command { docker version } -Failure "Docker is not running or is unavailable. Start Docker Desktop and rerun."
+& docker version *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker is not running or is unavailable. Start Docker Desktop and rerun."
+}
+$DockerServerVersion = (& docker version --format '{{.Server.Version}}').Trim()
+Write-Host "Docker: VERIFIED (Engine $DockerServerVersion)" -ForegroundColor DarkGray
 
 $NdkaRoot = Join-Path $RepoCache "nexus-synapse-ndka"
 $ProductionRoot = Join-Path $RepoCache "nexus-synapse-runtime"
@@ -183,8 +188,8 @@ Write-Host "Staged V5 byte policy: VERIFIED (-text)" -ForegroundColor DarkGray
 $Materializer = Join-Path $RigRoot "scripts\materialize_ndka_staged_v5_exact.py"
 $MaterializeOutput = & python $Materializer --repo $NdkaRoot --commit $NDKA_SHA 2>&1
 $MaterializeExitCode = $LASTEXITCODE
-$MaterializeOutput | ForEach-Object { Write-Host $_ }
 if ($MaterializeExitCode -ne 0) {
+    $MaterializeOutput | ForEach-Object { Write-Host $_ }
     throw "Failed to materialize byte-exact staged V5 snapshot."
 }
 $StagedSample = Join-Path $NdkaRoot "migration_staging\v5_snapshot\migrations\0001_core.sql"
@@ -212,8 +217,11 @@ $PrepOutput = & python (Join-Path $NdkaRoot "scripts\prepare_kernelized_acceptan
     --target-dir $StateRoot `
     --identity-env $IdentityEnv 2>&1
 $PrepExitCode = $LASTEXITCODE
-$PrepOutput | ForEach-Object { Write-Host $_ }
-if ($PrepExitCode -ne 0) { throw "Failed to create Monster state copies." }
+if ($PrepExitCode -ne 0) {
+    $PrepOutput | ForEach-Object { Write-Host $_ }
+    throw "Failed to create Monster state copies."
+}
+Write-Host "Isolated Monster state: PREPARED" -ForegroundColor DarkGray
 
 # Build a disposable, self-contained production checkout for the Monster.
 # Production memory code resolves its Chroma path relative to the production
@@ -311,14 +319,17 @@ $dockerArgs = @(
     "-e", "NLP_OTHER_USE_CPU=true",
     "-e", "HF_HUB_OFFLINE=1",
     "-e", "TRANSFORMERS_OFFLINE=1",
+    "-e", "HF_HUB_DISABLE_PROGRESS_BARS=1",
+    "-e", "TRANSFORMERS_VERBOSITY=error",
+    "-e", "TOKENIZERS_PARALLELISM=false",
+    "-e", "TQDM_DISABLE=1",
     "-e", "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434",
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
     "--mount", "type=bind,source=$ProductionRuntimeRoot,target=/production",
     "--mount", "type=bind,source=$RunRoot,target=/run",
     $ImageTag,
-    "--config", "/run/nexus-monster.env",
-    "--verbose"
+    "--config", "/run/nexus-monster.env"
 )
 if ($PublicSafe) {
     $dockerArgs += "--public-safe"
@@ -329,7 +340,7 @@ Write-Host "====================================================================
 Write-Host " STARTING FULL RUNTIME FLIGHT-CONTROL CAMPAIGN" -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green
 Write-Host "Run directory: $RunRoot" -ForegroundColor DarkGray
-Write-Host "Output mode:   VERBOSE / LIVE" -ForegroundColor DarkGray
+Write-Host "Output mode:   COCKPIT / LIVE (full detail retained in evidence)" -ForegroundColor DarkGray
 Write-Host "Evidence mode: $EvidenceMode" -ForegroundColor DarkGray
 Write-Host "Network:       BRIDGE (required for real provider)" -ForegroundColor DarkGray
 Write-Host "Provider:      $ProviderKind / REAL" -ForegroundColor DarkGray
