@@ -94,10 +94,8 @@ function Ensure-ExactCheckout {
     )
     if (-not (Test-Path (Join-Path $Destination ".git"))) {
         if (Test-Path $Destination) { Remove-Item -Recurse -Force $Destination }
-        Write-Host "Cloning $Repository ..." -ForegroundColor DarkGray
         Invoke-Checked -Command { gh repo clone $Repository $Destination -- --filter=blob:none --quiet } -Failure "Failed to clone $Repository"
     }
-    Write-Host "Pinning $Repository to $Sha ..." -ForegroundColor DarkGray
     Invoke-Checked -Command { git -C $Destination fetch --quiet origin $Sha --depth=1 } -Failure "Failed to fetch $Repository@$Sha"
     Invoke-Checked -Command { git -C $Destination checkout --quiet --detach $Sha } -Failure "Failed to checkout $Repository@$Sha"
     # Cached Windows clones may still contain worktree bytes produced under an
@@ -121,9 +119,7 @@ Write-Host "Execution:      LOCAL DOCKER / LIVE TERMINAL STREAM / REAL LLM" -For
 Write-Host "Evidence mode:  $EvidenceMode" -ForegroundColor Yellow
 Write-Host "NDKA:           $NDKA_SHA"
 Write-Host "Production:     $PRODUCTION_SHA"
-Write-Host "V5 donor ref:   $V5_SHA (build/schema donor only; runtime uses staged in-repo snapshot)"
-Write-Host "Legacy source:  $LegacyDb"
-Write-Host "V5 state:       $V5Db"
+Write-Host "V5 donor ref:   $V5_SHA"
 Write-Host "Provider:       $ProviderKind (REAL external inference)" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "GREEN means all required flight controls actually executed and passed." -ForegroundColor Yellow
@@ -159,14 +155,16 @@ Write-LocalProductionNlpRequirement
 & gh auth status *> $null
 if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not authenticated." }
 Write-Host "GitHub auth: VERIFIED" -ForegroundColor DarkGray
-Invoke-Checked -Command { git --version } -Failure "Git is not available on PATH."
-Invoke-Checked -Command { python --version } -Failure "Python is not available on PATH."
+& git --version *> $null
+if ($LASTEXITCODE -ne 0) { throw "Git is not available on PATH." }
+& python --version *> $null
+if ($LASTEXITCODE -ne 0) { throw "Python is not available on PATH." }
 & docker version *> $null
 if ($LASTEXITCODE -ne 0) {
     throw "Docker is not running or is unavailable. Start Docker Desktop and rerun."
 }
 $DockerServerVersion = (& docker version --format '{{.Server.Version}}').Trim()
-Write-Host "Docker: VERIFIED (Engine $DockerServerVersion)" -ForegroundColor DarkGray
+Write-Host "Host tools: VERIFIED (Git / Python / Docker Engine $DockerServerVersion)" -ForegroundColor DarkGray
 
 $NdkaRoot = Join-Path $RepoCache "nexus-synapse-ndka"
 $ProductionRoot = Join-Path $RepoCache "nexus-synapse-runtime"
@@ -209,7 +207,7 @@ New-Item -ItemType Directory -Force -Path $StateRoot, $EvidenceRoot, $ArtifactRo
 # Copy BOTH live state sources into disposable Monster state. Source DBs are
 # read-only inputs and are never mutated by the campaign.
 $IdentityEnv = Join-Path $StateRoot "identities.env"
-Write-Host "Preparing isolated Monster state from production User 18 sources ..." -ForegroundColor DarkGray
+Write-Host "Preparing isolated User 18 acceptance state ..." -ForegroundColor DarkGray
 $PrepOutput = & python (Join-Path $NdkaRoot "scripts\prepare_kernelized_acceptance_state.py") `
     --v5-source $V5Db `
     --legacy-source $LegacyDb `
@@ -231,7 +229,7 @@ Write-Host "Isolated Monster state: PREPARED" -ForegroundColor DarkGray
 # starts. A disposable clone keeps the pinned donor source immutable while
 # giving only the Monster-owned copy a writable data directory.
 $ProductionRuntimeRoot = Join-Path $StateRoot "production-runtime"
-Write-Host "Creating disposable production runtime checkout ..." -ForegroundColor DarkGray
+Write-Host "Preparing disposable production donor ..." -ForegroundColor DarkGray
 Invoke-Checked -Command {
     git clone --quiet --no-hardlinks $ProductionRoot $ProductionRuntimeRoot
 } -Failure "Failed to create disposable production runtime checkout."
@@ -246,13 +244,12 @@ if ($RuntimeProductionSha -ne $PRODUCTION_SHA) {
 $ProductionDataRoot = Join-Path $ProductionRuntimeRoot "data"
 $StateChroma = Join-Path $ProductionDataRoot "chroma_db"
 New-Item -ItemType Directory -Force -Path $ProductionDataRoot | Out-Null
-Write-Host "Copying production ChromaDB into disposable Monster runtime ..." -ForegroundColor DarkGray
+Write-Host "Preparing isolated RAG state ..." -ForegroundColor DarkGray
 Copy-Item -Path $LegacyChromaDir -Destination $StateChroma -Recurse -Force
 if (-not (Test-Path $StateChroma -PathType Container)) {
     throw "Disposable ChromaDB copy was not created."
 }
-Write-Host "Disposable production runtime: VERIFIED ($RuntimeProductionSha)" -ForegroundColor DarkGray
-Write-Host "RAG state copy: VERIFIED ($StateChroma)" -ForegroundColor DarkGray
+Write-Host "Production donor + RAG state: VERIFIED" -ForegroundColor DarkGray
 
 $ConfigPath = Join-Path $RunRoot "nexus-monster.env"
 $ConfigText = @"
@@ -276,17 +273,19 @@ $ImageTag = "nexus-kernelized-fixture-local:$ShortNdka-$ShortV5"
 $Dockerfile = Join-Path $RigRoot "containers\Dockerfile.ndka-full-monster-real"
 
 Write-Host ""
-Write-Host "Building/reusing Linux dependency-parity image ..." -ForegroundColor Cyan
-Write-Host "Image: $ImageTag" -ForegroundColor DarkGray
-Invoke-Checked -Command {
-    docker build `
-        --quiet `
-        --build-context "v5=$V5Root" `
-        --file $Dockerfile `
-        --tag $ImageTag `
-        $RigRoot
-} -Failure "Failed to build the local monster runtime image."
-Write-Host "Linux NLP image: VERIFIED (offline dependency + model closure smoke passed during build)" -ForegroundColor DarkGray
+Write-Host "Building/reusing Linux runtime image ..." -ForegroundColor Cyan
+$BuildOutput = & docker build `
+    --quiet `
+    --build-context "v5=$V5Root" `
+    --file $Dockerfile `
+    --tag $ImageTag `
+    $RigRoot 2>&1
+$BuildExitCode = $LASTEXITCODE
+if ($BuildExitCode -ne 0) {
+    $BuildOutput | ForEach-Object { Write-Host $_ }
+    throw "Failed to build the local monster runtime image."
+}
+Write-Host "Linux runtime image: VERIFIED (dependency + offline NLP/model closure)" -ForegroundColor DarkGray
 
 $dockerArgs = @(
     "run",
