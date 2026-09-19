@@ -351,6 +351,11 @@ class KernelizedMonsterRuntimeAdapter:
             "topic": result.state.topic,
             "sentence_count": sentence_count,
             "latency_components": tuple(sorted(latency)),
+            "latency_breakdown": {
+                key: value
+                for key, value in latency.items()
+                if isinstance(value, (int, float))
+            },
             "intent_label_count": len(all_intents),
             "intent_score_spread": score_spread,
             "static_defaults": False,
