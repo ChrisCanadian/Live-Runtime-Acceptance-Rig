@@ -78,7 +78,7 @@ def test_monster_local_debug_is_default_and_public_safe_is_explicit():
 
 def test_monster_preserves_exact_authority_pins():
     launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
-    assert "aaae2cbf84da2d6b2a094175342f8367837c7185" in launcher
+    assert "5df5f7d1fe10c95ad6cd269b6fc687cff9c988a6" in launcher
     assert "2514a11366f8e7f345bb854c0cfaee8c7b40dddd" in launcher
     assert "48932a94a58f24f54b2fbe81c9d400ddb32f82ed" in launcher
     assert "c612" not in launcher
