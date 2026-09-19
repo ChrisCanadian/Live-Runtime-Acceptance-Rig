@@ -167,3 +167,48 @@ def test_verbose_includes_check_diagnostics(tmp_path) -> None:
     assert "Expected:" in output
     assert "Observed:" in output
     assert "cleanup_manifest.json" in output
+
+
+
+def test_cockpit_initialization_summary_is_compact_and_keeps_detail_pointer() -> None:
+    stream = io.StringIO()
+    console = Console(stream=stream)
+    console.initialization(
+        health={
+            "registered": tuple(f"nexus.kernel.{index}" for index in range(17)),
+            "failed_kernel_ids": (),
+            "degraded_kernel_ids": (),
+            "real_provider": True,
+            "provider_id": "apifree",
+            "model_id": "qwen/test",
+            "provider_probe": {
+                "status": "ok",
+                "provider_id": "apifree",
+                "model_id": "qwen/test",
+            },
+            "analysis_probe": {
+                "status": "ok",
+                "source": "production_full_nlp_local",
+                "latency_components": {
+                    "total_ms": 1234.0,
+                    "stanza_ms": 234.0,
+                },
+            },
+            "rag_probe": {
+                "rag_initialized": True,
+                "embedding_dimensions": 768,
+                "conversation_vectors": 801,
+            },
+        },
+        startup_log_path="logs/runtime-start.log",
+    )
+    output = stream.getvalue()
+    assert "NEXUS RUNTIME INITIALIZATION" in output
+    assert "17/17 registered / READY" in output
+    assert "NLP:      READY / full local production pipeline" in output
+    assert "stanza=234ms" in output
+    assert "Provider: READY / apifree / qwen/test" in output
+    assert "RAG:      READY / 768d / 801 vectors" in output
+    assert "logs/runtime-start.log" in output
+    assert "Intent labels:" not in output
+    assert "Emotion ctx:" not in output
