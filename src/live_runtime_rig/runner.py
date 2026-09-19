@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
+import io
 import platform
 import secrets
 import sys
@@ -151,6 +153,34 @@ class RigRunner:
     def _register_cleanup_entries(self, entries: Iterable[Any]) -> None:
         self.cleanup.add_many(entries)
         self.evidence.write_json("cleanup_manifest.json", self.cleanup.as_dict())
+
+    def _write_case_runtime_log(
+        self,
+        case_name: str,
+        *,
+        stdout_text: str,
+        stderr_text: str,
+    ) -> str | None:
+        """Persist noisy application/library output without flooding the cockpit."""
+
+        if not stdout_text and not stderr_text:
+            return None
+
+        parts: list[str] = []
+        if stdout_text:
+            parts.extend(("=== STDOUT ===", stdout_text.rstrip(), ""))
+        if stderr_text:
+            parts.extend(("=== STDERR ===", stderr_text.rstrip(), ""))
+        payload = "\n".join(parts).rstrip() + "\n"
+        if self.public_safe:
+            payload = self.redactor.redact_text(payload)
+
+        safe_name = self.evidence.safe_case_name(case_name)
+        relative = Path("logs") / "cases" / f"{safe_name}.log"
+        destination = self.evidence.root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(payload, encoding="utf-8")
+        return relative.as_posix()
 
     def _environment(self) -> dict[str, Any]:
         provenance = {
@@ -481,11 +511,27 @@ class RigRunner:
             suite_index += 1
             for case in (item for item in cases if item.suite == suite):
                 self._executed_cases.add((case.suite, case.name))
+                captured_stdout = io.StringIO()
+                captured_stderr = io.StringIO()
+                runtime_log_path: str | None = None
                 try:
                     with self.tracer.span(
                         "case.execution", suite=case.suite, case=case.name
                     ):
-                        result = case.run(self.runtime, self.database, context)
+                        if self.options.verbose:
+                            result = case.run(self.runtime, self.database, context)
+                        else:
+                            # Keep the normal terminal human-readable while
+                            # retaining subsystem chatter and library diagnostics
+                            # as evidence. --verbose restores the historical live
+                            # firehose for deep debugging.
+                            with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(captured_stderr):
+                                result = case.run(self.runtime, self.database, context)
+                            runtime_log_path = self._write_case_runtime_log(
+                                case.name,
+                                stdout_text=captured_stdout.getvalue(),
+                                stderr_text=captured_stderr.getvalue(),
+                            )
                         if not isinstance(result, CaseResult):
                             raise TypeError("case must return CaseResult")
                         case_path = self.evidence.write_case(
@@ -495,6 +541,7 @@ class RigRunner:
                                 "suite": case.suite,
                                 "evidence": result.evidence,
                                 "cleanup_entry_count": len(result.cleanup_entries),
+                                "runtime_log": runtime_log_path,
                             },
                         )
                         for specification in result.checks:
@@ -508,6 +555,12 @@ class RigRunner:
                         self._register_cleanup_entries(result.cleanup_entries)
                         state.update(result.state_updates)
                 except Exception as exc:
+                    if not self.options.verbose:
+                        runtime_log_path = self._write_case_runtime_log(
+                            case.name,
+                            stdout_text=captured_stdout.getvalue(),
+                            stderr_text=captured_stderr.getvalue(),
+                        )
                     error_path = self.evidence.write_error(
                         f"case_{case.name}", exc
                     )
