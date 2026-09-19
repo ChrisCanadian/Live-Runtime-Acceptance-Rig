@@ -313,3 +313,36 @@ def test_monster_terminal_defaults_to_cockpit_output_without_losing_evidence():
     assert '"--verbose"' in reporter
     assert "retained in the evidence JSON" in reporter
     assert "Not-run check detail: retained in not_run.json." in reporter
+
+
+
+def test_monster_tool_loop_uses_commissioned_runtime_tool_not_phantom_calculator():
+    root = Path(__file__).parents[1]
+    cases_source = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "cases.py"
+    ).read_text(encoding="utf-8")
+    adapter_source = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+    launcher = (
+        root / "scripts" / "run_nexus_monster_docker.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "Use the memory.retrieve tool" in cases_source
+    assert "seed_tool_loop_memory" in cases_source
+    assert "731947" in cases_source
+    assert "calculation tool" not in cases_source
+    assert "17 * 19" not in cases_source
+
+    assert "MemoryOperation.CANONICAL_ADD" in adapter_source
+    assert 'assembled.host.registry.get("nexus.memory")' in adapter_source
+    assert "memory.acceptance_tool_seed" in adapter_source
+    assert 'assembled.host.registry.get("nexus.tools")' not in (
+        adapter_source[
+            adapter_source.index("def seed_tool_loop_memory"):
+            adapter_source.index("def exercise_kernel_boundary")
+        ]
+    )
+
+    assert "memory:read" in launcher
+    assert "tools:calculate" not in launcher
