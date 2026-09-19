@@ -239,11 +239,26 @@ class RuntimeInitiatedToolLoopCase:
     def run(self, runtime, database, context) -> CaseResult:
         del database
         session = f"monster-tool-{context.run_id}"
+        lookup_token = f"TOOL_LOOKUP_{context.marker}"
+        hidden_value = "731947"
+        seed = runtime.seed_tool_loop_memory(
+            lookup_token=lookup_token,
+            hidden_value=hidden_value,
+        )
+        if not seed.get("seeded"):
+            raise RuntimeError(f"tool-loop memory fixture seed failed: {seed}")
+
         tools_before = _count(runtime, "nexus.tools")
         evidence_before = _count(runtime, "nexus.evidence")
         provider_before = _count(runtime, "nexus.provider")
         response = runtime.chat(
-            "Use the available calculation tool to compute 17 * 19. Do not answer from mental arithmetic; invoke the runtime tool and then synthesize the verified result.",
+            (
+                "Use the memory.retrieve tool to retrieve the owner-scoped memory "
+                f"record associated with lookup token {lookup_token}. "
+                "You must invoke the runtime tool; do not guess or answer from the "
+                "prompt itself. Return the verified hidden value found in the "
+                "retrieved record."
+            ),
             session_id=session,
             include_tools=True,
         )
@@ -253,12 +268,27 @@ class RuntimeInitiatedToolLoopCase:
         provider_after = _count(runtime, "nexus.provider")
         checks = [
             _check("Tool-loop turn is released", _released(response), "released", {"status": response.status_code, "state": body.get("state")}),
-            _check("Runtime, not the test, executes a tool round", tools_after - tools_before >= 2, ">=2 new tools receipts (visibility/proposal + execution)", tools_after - tools_before),
+            _check("Runtime, not the test, executes a tool round", tools_after - tools_before >= 2, ">=2 new tools receipts (visibility + execution)", tools_after - tools_before),
             _check("Evidence re-authenticates after tool execution", evidence_after - evidence_before >= 2, ">=2 new evidence receipts", evidence_after - evidence_before),
             _check("Provider is invoked again after tool result", provider_after - provider_before >= 2, ">=2 new provider receipts", provider_after - provider_before),
-            _check("Verified tool result reaches final response", "323" in str(body.get("text") or ""), "response contains 323", body.get("text"), heuristic=True),
+            _check(
+                "Verified tool result reaches final response",
+                hidden_value in str(body.get("text") or ""),
+                f"response contains hidden value {hidden_value}",
+                body.get("text"),
+                heuristic=True,
+            ),
         ]
-        return CaseResult(checks=checks, evidence={"response": body, "coverage": _coverage(runtime)})
+        return CaseResult(
+            checks=checks,
+            evidence={
+                "seed": seed,
+                "lookup_token": lookup_token,
+                "hidden_value_not_in_prompt": True,
+                "response": body,
+                "coverage": _coverage(runtime),
+            },
+        )
 
 
 class ContinuityAndRestartCase:
