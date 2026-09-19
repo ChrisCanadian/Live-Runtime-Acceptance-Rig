@@ -78,7 +78,7 @@ def test_monster_local_debug_is_default_and_public_safe_is_explicit():
 
 def test_monster_preserves_exact_authority_pins():
     launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
-    assert "5df5f7d1fe10c95ad6cd269b6fc687cff9c988a6" in launcher
+    assert "c83c60f5a64a97de9fba34cff3c9479a927e7a58" in launcher
     assert "2514a11366f8e7f345bb854c0cfaee8c7b40dddd" in launcher
     assert "48932a94a58f24f54b2fbe81c9d400ddb32f82ed" in launcher
     assert "c612" not in launcher
@@ -346,3 +346,18 @@ def test_monster_tool_loop_uses_commissioned_runtime_tool_not_phantom_calculator
 
     assert "memory:read" in launcher
     assert "tools:calculate" not in launcher
+
+
+def test_monster_continuity_and_isolation_cases_do_not_depend_on_tools():
+    source = Path(cases.__file__).read_text(encoding="utf-8")
+    continuity_start = source.index("class ContinuityRestartCase")
+    isolation_start = source.index("class CrossUserIsolationCase")
+    cognition_start = source.index("class CognitionModesLearningCase")
+    continuity = source[continuity_start:isolation_start]
+    isolation = source[isolation_start:cognition_start]
+
+    assert "include_tools=False" in continuity
+    assert continuity.count("include_tools=False") >= 3
+    assert "include_tools=False" in isolation
+    assert isolation.count("include_tools=False") >= 2
+    assert "blocking_reason" in isolation
