@@ -199,7 +199,12 @@ def build_report(run_root: Path, *, public_safe: bool = False) -> dict[str, Any]
     return report
 
 
-def _print_diagnostic(diagnostic: dict[str, Any], *, title: str) -> None:
+def _print_diagnostic(
+    diagnostic: dict[str, Any],
+    *,
+    title: str,
+    verbose: bool = False,
+) -> None:
     print()
     print(title)
     print("-" * len(title))
@@ -210,15 +215,26 @@ def _print_diagnostic(diagnostic: dict[str, Any], *, title: str) -> None:
     frames = list(diagnostic.get("relevant_frames") or [])
     if frames:
         print("Relevant application frames:")
-        for frame in frames:
+        visible_frames = frames if verbose else frames[-6:]
+        for frame in visible_frames:
             print(f"  {frame['path']}:{frame['line']} in {frame['function']}")
+        if not verbose and len(frames) > len(visible_frames):
+            print(f"  ... {len(frames) - len(visible_frames)} earlier application frame(s) in evidence")
     traceback_text = diagnostic.get("traceback")
     if traceback_text:
-        print("Full traceback:")
-        print(traceback_text.rstrip())
+        if verbose:
+            print("Full traceback:")
+            print(traceback_text.rstrip())
+        else:
+            print("Full traceback: retained in the evidence JSON (rerun reporter with --verbose to print it).")
 
 
-def print_report(report: dict[str, Any], *, public_safe: bool = False) -> None:
+def print_report(
+    report: dict[str, Any],
+    *,
+    public_safe: bool = False,
+    verbose: bool = False,
+) -> None:
     blocked = report.get("blocked_by")
     print()
     print("MONSTER CHAIN COMPLETION REPORT")
@@ -233,30 +249,55 @@ def print_report(report: dict[str, Any], *, public_safe: bool = False) -> None:
 
     diagnostic = report.get("failure_diagnostic")
     if diagnostic:
-        _print_diagnostic(diagnostic, title="LOCAL RUNTIME FAILURE DIAGNOSTIC")
+        _print_diagnostic(
+            diagnostic,
+            title="LOCAL RUNTIME FAILURE DIAGNOSTIC",
+            verbose=verbose,
+        )
     elif public_safe and blocked:
         print("Diagnostic detail: REDACTED (public-safe mode)")
 
     case_diagnostics = list(report.get("case_failure_diagnostics") or [])
+    diagnostic_key = None
+    if diagnostic:
+        diagnostic_key = (
+            str(diagnostic.get("exception_type") or ""),
+            str(diagnostic.get("message") or ""),
+        )
+    case_diagnostics = [
+        item
+        for item in case_diagnostics
+        if (
+            str(item.get("exception_type") or ""),
+            str(item.get("message") or ""),
+        ) != diagnostic_key
+    ]
     if case_diagnostics:
         print()
         print("CASE EXCEPTION DIAGNOSTICS")
         print("--------------------------")
-        print(f"Unique case exceptions: {len(case_diagnostics)}")
+        print(f"Additional unique case exceptions: {len(case_diagnostics)}")
         for index, item in enumerate(case_diagnostics, start=1):
-            _print_diagnostic(item, title=f"CASE EXCEPTION {index}")
+            _print_diagnostic(
+                item,
+                title=f"CASE EXCEPTION {index}",
+                verbose=verbose,
+            )
 
     checks_not_run = list(report.get("not_run_checks") or [])
     stages_not_run = list(report.get("not_run") or [])
-    print(f"Not run checks: {int(report.get('not_run_check_count') or len(checks_not_run))}")
+    not_run_count = int(report.get("not_run_check_count") or len(checks_not_run))
+    print(f"Not run checks: {not_run_count}")
     print(f"Not run stages: {len(stages_not_run)}")
 
-    if checks_not_run:
+    if checks_not_run and verbose:
         print()
         print("MONSTER ACCEPTANCE CHECKS NOT RUN")
         print("---------------------------------")
         for item in checks_not_run:
             print(f"  [NOT RUN] {item['suite']} :: {item['name']}")
+    elif checks_not_run:
+        print("Not-run check detail: retained in not_run.json.")
 
     if stages_not_run:
         print()
@@ -274,6 +315,11 @@ def main() -> int:
     group.add_argument("--run-root", type=Path)
     group.add_argument("--evidence-root", type=Path)
     parser.add_argument("--public-safe", action="store_true")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print full tracebacks and every not-run check instead of the cockpit summary.",
+    )
     args = parser.parse_args()
 
     run_root = (
@@ -284,7 +330,11 @@ def main() -> int:
     if not (run_root / "run.json").is_file():
         raise SystemExit(f"run.json not found beneath {run_root}")
     report = build_report(run_root, public_safe=args.public_safe)
-    print_report(report, public_safe=args.public_safe)
+    print_report(
+        report,
+        public_safe=args.public_safe,
+        verbose=args.verbose,
+    )
     return 0
 
 
