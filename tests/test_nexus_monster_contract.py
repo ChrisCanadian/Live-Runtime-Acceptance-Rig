@@ -164,8 +164,8 @@ def test_monster_requires_full_local_nlp_and_forbids_lightweight_defaults():
     assert "Write-LocalProductionNlpRequirement" in launcher
     assert "Assert-LocalProductionNlpConfiguration" not in launcher
     assert "NLP analyzer: VERIFIED" not in launcher
-    assert "Linux NLP image: VERIFIED" in launcher
-    assert launcher.index("Building/reusing Linux dependency-parity image") < launcher.index("Linux NLP image: VERIFIED")
+    assert "Linux runtime image: VERIFIED" in launcher
+    assert launcher.index("Building/reusing Linux runtime image") < launcher.index("Linux runtime image: VERIFIED")
     assert '"-e", "NLP_ENABLED=true"' in launcher
     assert '"-e", "NLP_ZERO_SHOT_API=local"' in launcher
     assert '"-e", "NLP_EMOTION_API=local"' in launcher
@@ -287,6 +287,9 @@ def test_monster_terminal_defaults_to_cockpit_output_without_losing_evidence():
     reporter = (root / "scripts" / "report_nexus_monster_incomplete.py").read_text(encoding="utf-8")
 
     assert "COCKPIT / LIVE (full detail retained in evidence)" in launcher
+    assert "Host tools: VERIFIED" in launcher
+    assert "Production donor + RAG state: VERIFIED" in launcher
+    assert "Linux runtime image: VERIFIED" in launcher
     assert '"--verbose"' not in launcher
     assert '"HF_HUB_DISABLE_PROGRESS_BARS=1"' in launcher
     assert '"TRANSFORMERS_VERBOSITY=error"' in launcher
