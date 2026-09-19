@@ -63,6 +63,71 @@ class Console:
             if check.evidence_path:
                 self._line(f"         Evidence: {check.evidence_path}")
 
+    def initialization(
+        self,
+        *,
+        health: dict[str, Any],
+        startup_log_path: str | None,
+    ) -> None:
+        if self.quiet:
+            return
+
+        analysis = dict(health.get("analysis_probe") or {})
+        provider = dict(health.get("provider_probe") or {})
+        rag = dict(health.get("rag_probe") or {})
+        registered = tuple(health.get("registered") or health.get("present") or ())
+        failed = tuple(health.get("failed_kernel_ids") or ())
+        degraded = tuple(health.get("degraded_kernel_ids") or ())
+
+        self._line()
+        self._line("NEXUS RUNTIME INITIALIZATION")
+        self._line("----------------------------")
+        self._line(
+            f"  Kernels:  {len(registered)}/17 registered"
+            + (" / READY" if not failed and not degraded else "")
+        )
+        self._line(
+            "  NLP:      "
+            + (
+                "READY / full local production pipeline"
+                if analysis.get("status") == "ok"
+                else str(analysis.get("status") or "UNKNOWN").upper()
+            )
+        )
+        if analysis.get("source"):
+            self._line(f"            source={analysis.get('source')}")
+        if analysis.get("latency_components"):
+            latency = dict(analysis.get("latency_components") or {})
+            total = latency.get("total_ms")
+            stanza = latency.get("stanza_ms")
+            details = []
+            if total is not None:
+                details.append(f"total={float(total):.0f}ms")
+            if stanza is not None:
+                details.append(f"stanza={float(stanza):.0f}ms")
+            if details:
+                self._line(f"            {' / '.join(details)}")
+        self._line(
+            "  Provider: "
+            + (
+                f"READY / {provider.get('provider_id') or health.get('provider_id')} / "
+                f"{provider.get('model_id') or health.get('model_id')}"
+                if (provider.get("status") == "ok" or health.get("real_provider"))
+                else "UNKNOWN"
+            )
+        )
+        self._line(
+            "  RAG:      "
+            + (
+                f"READY / {rag.get('embedding_dimensions', '?')}d / "
+                f"{rag.get('conversation_vectors', '?')} vectors"
+                if rag.get("rag_initialized")
+                else "UNKNOWN"
+            )
+        )
+        if startup_log_path:
+            self._line(f"  Detail:   {startup_log_path}")
+
     def diagnostic(self, label: str, value: Any) -> None:
         if self.verbose and not self.quiet:
             self._line(f"  {label}: {value!r}")
