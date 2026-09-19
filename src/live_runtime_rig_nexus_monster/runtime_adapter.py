@@ -21,6 +21,32 @@ from fastapi import Request
 from live_runtime_rig.config import RigConfig
 
 
+def _configure_operator_console_noise() -> None:
+    """Suppress third-party progress bars without muting Nexus initialization."""
+
+    # Model materialization progress is useful when debugging Transformers
+    # itself, but it overwhelms acceptance output and is not acceptance evidence.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    os.environ.setdefault("TQDM_DISABLE", "1")
+
+    try:
+        from transformers.utils import logging as transformers_logging
+
+        transformers_logging.disable_progress_bar()
+        transformers_logging.set_verbosity_error()
+    except Exception:
+        pass
+
+    try:
+        from huggingface_hub.utils import disable_progress_bars
+
+        disable_progress_bars()
+    except Exception:
+        pass
+
+
 REQUIRED_KERNEL_IDS = (
     "nexus.analysis",
     "nexus.artifacts",
@@ -391,6 +417,7 @@ class KernelizedMonsterRuntimeAdapter:
             raise FileNotFoundError(f"legacy fixture database not found: {self.legacy_db}")
 
         self._configure_v5_environment()
+        _configure_operator_console_noise()
 
         from fastapi import FastAPI
         from nexus_ndka.host.runtime_bootstrap import (
