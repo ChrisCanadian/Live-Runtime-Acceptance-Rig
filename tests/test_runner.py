@@ -189,7 +189,13 @@ def test_cockpit_initialization_summary_is_compact_and_keeps_detail_pointer() ->
             "analysis_probe": {
                 "status": "ok",
                 "source": "production_full_nlp_local",
-                "latency_components": {
+                "latency_components": (
+                    "emotion_ms",
+                    "sentence_classification_ms",
+                    "stanza_ms",
+                    "total_ms",
+                ),
+                "latency_breakdown": {
                     "total_ms": 1234.0,
                     "stanza_ms": 234.0,
                 },
@@ -212,3 +218,55 @@ def test_cockpit_initialization_summary_is_compact_and_keeps_detail_pointer() ->
     assert "logs/runtime-start.log" in output
     assert "Intent labels:" not in output
     assert "Emotion ctx:" not in output
+
+
+
+def test_cockpit_initialization_never_raises_on_display_shape_drift() -> None:
+    stream = io.StringIO()
+    console = Console(stream=stream)
+
+    console.initialization(
+        health={
+            "registered": tuple(f"nexus.kernel.{index}" for index in range(17)),
+            "analysis_probe": {
+                "status": "ok",
+                "source": "production_full_nlp_local",
+                # This is the exact shape that caused ACCEPTANCE_20260919_054910_F6E9
+                # to fail inside the presentation layer.
+                "latency_components": (
+                    "emotion_ms",
+                    "sentence_classification_ms",
+                    "stanza_ms",
+                    "total_ms",
+                ),
+            },
+            "provider_probe": {"status": "ok"},
+            "rag_probe": {},
+        },
+        startup_log_path="logs/runtime-start.log",
+    )
+
+    output = stream.getvalue()
+    assert "NEXUS RUNTIME INITIALIZATION" in output
+    assert "17/17 registered / READY" in output
+    assert "display-only formatting error" not in output
+
+
+def test_cockpit_initialization_degrades_instead_of_failing_campaign() -> None:
+    class ExplodingMapping(dict):
+        def get(self, key, default=None):
+            if key == "analysis_probe":
+                raise ValueError("display-only boom")
+            return super().get(key, default)
+
+    stream = io.StringIO()
+    console = Console(stream=stream)
+
+    console.initialization(
+        health=ExplodingMapping(),
+        startup_log_path="logs/runtime-start.log",
+    )
+
+    output = stream.getvalue()
+    assert "Summary:  unavailable (display-only formatting error)" in output
+    assert "logs/runtime-start.log" in output
