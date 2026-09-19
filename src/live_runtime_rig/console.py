@@ -44,9 +44,22 @@ class Console:
             return
         suffix = " (heuristic)" if check.heuristic else ""
         self._line(f"  [{check.status.value}] {check.name}{suffix}")
+
+        # Normal terminal mode is a cockpit view: one line per successful
+        # acceptance assertion. Detailed expected/observed values remain in
+        # run.json/case evidence and are only expanded live with --verbose.
         if self.verbose:
             self._line(f"         Expected: {check.expected!r}")
             self._line(f"         Observed: {check.observed!r}")
+            if check.evidence_path:
+                self._line(f"         Evidence: {check.evidence_path}")
+            return
+
+        # Failures and explicit skips still surface enough information to act
+        # immediately without requiring the operator to hunt for the artifact.
+        if check.status.value in {"FAIL", "SKIP"}:
+            label = "Observed" if check.status.value == "FAIL" else "Reason"
+            self._line(f"         {label}: {check.observed!r}")
             if check.evidence_path:
                 self._line(f"         Evidence: {check.evidence_path}")
 
