@@ -273,3 +273,37 @@ def test_monster_fault_controls_are_commissioned_through_real_manager_boundaries
     assert 'calculate' not in adapter
     assert 'tools:calculate' not in launcher
     assert "finally:" in adapter
+
+
+
+def test_monster_terminal_defaults_to_cockpit_output_without_losing_evidence():
+    root = Path(__file__).parents[1]
+    launcher = (root / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
+    runner = (root / "src" / "live_runtime_rig" / "runner.py").read_text(encoding="utf-8")
+    console = (root / "src" / "live_runtime_rig" / "console.py").read_text(encoding="utf-8")
+    adapter = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+    reporter = (root / "scripts" / "report_nexus_monster_incomplete.py").read_text(encoding="utf-8")
+
+    assert "COCKPIT / LIVE (full detail retained in evidence)" in launcher
+    assert '"--verbose"' not in launcher
+    assert '"HF_HUB_DISABLE_PROGRESS_BARS=1"' in launcher
+    assert '"TRANSFORMERS_VERBOSITY=error"' in launcher
+    assert '"TQDM_DISABLE=1"' in launcher
+
+    assert "redirect_stdout" in runner
+    assert "redirect_stderr" in runner
+    assert 'Path("logs") / "cases"' in runner
+    assert '"runtime_log": runtime_log_path' in runner
+
+    assert 'if check.status.value in {"FAIL", "SKIP"}' in console
+    assert "Expected:" in console
+    assert "Observed:" in console
+
+    assert "disable_progress_bar()" in adapter
+    assert "disable_progress_bars()" in adapter
+    assert 'parser.add_argument(' in reporter
+    assert '"--verbose"' in reporter
+    assert "retained in the evidence JSON" in reporter
+    assert "Not-run check detail: retained in not_run.json." in reporter
