@@ -308,11 +308,23 @@ class ContinuityAndRestartCase:
         del database
         session = f"monster-continuity-{context.run_id}"
         marker = f"DURABLE_{context.marker}"
-        first = runtime.chat(f"Remember this exact continuity marker for this acceptance session: {marker}", session_id=session)
-        second = runtime.chat("What continuity marker did I give you in this session?", session_id=session)
+        first = runtime.chat(
+            f"Remember this exact continuity marker for this acceptance session: {marker}",
+            session_id=session,
+            include_tools=False,
+        )
+        second = runtime.chat(
+            "What continuity marker did I give you in this session?",
+            session_id=session,
+            include_tools=False,
+        )
         memory_before_restart = _count(runtime, "nexus.memory")
         runtime.request("POST", "/__rig/restart")
-        third = runtime.chat("After the runtime restart, recover the continuity marker from this same session.", session_id=session)
+        third = runtime.chat(
+            "After the runtime restart, recover the continuity marker from this same session.",
+            session_id=session,
+            include_tools=False,
+        )
         memory_after_restart = _count(runtime, "nexus.memory")
         continuity = runtime.exercise_kernel_boundary("nexus.continuity", marker=f"{context.marker}-continuity")
         checks = [
@@ -346,16 +358,34 @@ class CrossUserIsolationCase:
             f"This marker belongs only to the primary principal: {marker}",
             session_id=primary_session,
             principal="primary",
+            include_tools=False,
         )
         second = runtime.chat(
             "State only context authorized for this secondary principal. Do not infer another user's private marker.",
             session_id=secondary_session,
             principal="secondary",
+            include_tools=False,
         )
         second_text = str(_payload(second).get("text") or "")
         checks = [
-            _check("Primary principal turn released", _released(first), "released", _payload(first).get("state")),
-            _check("Secondary principal turn released", _released(second), "released", _payload(second).get("state")),
+            _check(
+                "Primary principal turn released",
+                _released(first),
+                "released",
+                {
+                    "state": _payload(first).get("state"),
+                    "blocking_reason": _payload(first).get("blocking_reason"),
+                },
+            ),
+            _check(
+                "Secondary principal turn released",
+                _released(second),
+                "released",
+                {
+                    "state": _payload(second).get("state"),
+                    "blocking_reason": _payload(second).get("blocking_reason"),
+                },
+            ),
             _check("Primary marker does not leak to secondary response", marker not in second_text, "marker absent", "absent" if marker not in second_text else "present", heuristic=True),
             _check("Primary and secondary sessions remain distinct", primary_session != secondary_session, "different session ids", {"primary": primary_session, "secondary": secondary_session}),
         ]
