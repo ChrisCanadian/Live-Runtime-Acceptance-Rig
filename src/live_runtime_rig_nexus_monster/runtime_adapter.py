@@ -585,6 +585,79 @@ class KernelizedMonsterRuntimeAdapter:
             },
         )
 
+    def seed_tool_loop_memory(
+        self,
+        *,
+        lookup_token: str,
+        hidden_value: str,
+    ) -> Mapping[str, Any]:
+        """Seed deterministic tool evidence through the public Memory boundary.
+
+        This prepares evidence only. The acceptance case must still make the
+        provider propose memory.retrieve and the ordinary governed runtime must
+        execute it. The rig never invokes the Tools kernel for this case.
+        """
+
+        from nexus_ndka.kernels.memory import (
+            MemoryOperation,
+            MemoryRequest,
+            MemoryResult,
+        )
+        from nexus_ndka.runtime.contracts import KernelStatus, RuntimeContext
+
+        assembled, _ = self._require_started()
+        manager = assembled.host.registry.get("nexus.memory")
+        request_id = f"monster-tool-seed:{lookup_token}"
+        context = RuntimeContext(
+            request_id=request_id,
+            turn_id=request_id,
+            actor_id=str(self.primary_user_id),
+            scope_id=str(self.primary_user_id),
+            session_id=f"monster-tool-seed-{lookup_token}",
+            metadata={
+                "owner_key": self.primary_owner_key,
+                "acceptance_fixture_seed": True,
+            },
+        )
+        result = asyncio.run(
+            manager.execute(
+                MemoryRequest(
+                    operation=MemoryOperation.CANONICAL_ADD,
+                    user_id=self.primary_user_id,
+                    owner_key=self.primary_owner_key,
+                    correlation_id=request_id,
+                    source_type="MONSTER_ACCEPTANCE_FIXTURE",
+                    source_record_id=lookup_token,
+                    text=(
+                        f"Acceptance lookup token {lookup_token}. "
+                        f"The verified hidden value is {hidden_value}."
+                    ),
+                    provenance={
+                        "source": "monster_acceptance",
+                        "purpose": "runtime_initiated_tool_loop",
+                        "lookup_token": lookup_token,
+                    },
+                    confidence=1.0,
+                    truth_label="SYSTEM_RECORD",
+                    topic="monster_runtime_tool_loop",
+                    model_generated=False,
+                    user_confirmed=True,
+                ),
+                context,
+            )
+        )
+        if not isinstance(result, MemoryResult):
+            raise TypeError(
+                f"memory seed returned {type(result)!r}; expected MemoryResult"
+            )
+        self._observe_boundary_result(result, label="memory.acceptance_tool_seed")
+        value = result.envelope.value if isinstance(result.envelope.value, Mapping) else {}
+        return {
+            "receipt_status": result.receipt.status.value,
+            "source_id": value.get("source_id"),
+            "idempotent_replay": bool(value.get("idempotent_replay")),
+            "seeded": result.receipt.status is KernelStatus.OK and bool(value.get("source_id")),
+        }
     def exercise_kernel_boundary(self, kernel_id: str, *, marker: str) -> Mapping[str, Any]:
         """Exercise a registered public manager at its owning responsibility.
 
