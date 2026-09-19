@@ -247,6 +247,7 @@ def test_monster_kernel_status_assertions_follow_canonical_lowercase_values():
 
 def test_monster_fault_controls_are_commissioned_through_real_manager_boundaries():
     source = Path(cases.__file__).read_text(encoding="utf-8")
+    launcher = (Path(__file__).parents[1] / "scripts" / "run_nexus_monster_docker.ps1").read_text(encoding="utf-8")
     adapter = (
         Path(__file__).parents[1]
         / "src"
@@ -266,4 +267,9 @@ def test_monster_fault_controls_are_commissioned_through_real_manager_boundaries
     assert 'assembled.host.registry.get("nexus.provider")' in adapter
     assert 'assembled.host.registry.get("nexus.tools")' in adapter
     assert 'assembled.host.registry.get("nexus.evidence")' in adapter
+    assert 'tool_id="document.read"' in adapter
+    assert 'version="1.0.0"' in adapter
+    assert 'tools:document' in launcher
+    assert 'calculate' not in adapter
+    assert 'tools:calculate' not in launcher
     assert "finally:" in adapter

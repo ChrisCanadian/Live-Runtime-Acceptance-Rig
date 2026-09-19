@@ -134,7 +134,7 @@ class KernelizedMonsterRuntimeAdapter:
         self.secondary_owner_key = os.environ.get("NEXUS_RIG_SECONDARY_OWNER_KEY", "fixture-owner-19")
         raw_permissions = os.environ.get(
             "NEXUS_RIG_MONSTER_PERMISSIONS",
-            "tools:calculate,tools:read,artifacts:create,artifacts:read,jobs:create,jobs:read",
+            "tools:document,artifacts:create,artifacts:read,jobs:create,jobs:read",
         )
         self.permissions = frozenset(
             value.strip() for value in raw_permissions.split(",") if value.strip()
@@ -847,9 +847,9 @@ class KernelizedMonsterRuntimeAdapter:
                     manager.execute(
                         ToolRequest(
                             operation=ToolOperation.EXECUTE,
-                            tool_id="calculate",
-                            version="1.0",
-                            arguments={"expression": "17 * 19"},
+                            tool_id="document.read",
+                            version="1.0.0",
+                            arguments={"segment_ids": ["acceptance-timeout-segment"]},
                             provider_proposal_id=f"acceptance-timeout:{marker}",
                         ),
                         context,
