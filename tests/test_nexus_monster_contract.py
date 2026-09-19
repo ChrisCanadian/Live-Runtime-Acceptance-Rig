@@ -292,10 +292,13 @@ def test_monster_terminal_defaults_to_cockpit_output_without_losing_evidence():
     assert '"TRANSFORMERS_VERBOSITY=error"' in launcher
     assert '"TQDM_DISABLE=1"' in launcher
 
+    assert "from pathlib import Path" in runner
     assert "redirect_stdout" in runner
     assert "redirect_stderr" in runner
+    assert 'Path("logs") / "runtime-start.log"' in runner
     assert 'Path("logs") / "cases"' in runner
     assert '"runtime_log": runtime_log_path' in runner
+    assert "self.console.initialization(" in runner
 
     assert 'if check.status.value in {"FAIL", "SKIP"}' in console
     assert "Expected:" in console
