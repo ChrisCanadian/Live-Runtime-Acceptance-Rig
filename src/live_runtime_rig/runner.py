@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .assertions import AssertionLedger, CheckStatus
@@ -154,9 +155,9 @@ class RigRunner:
         self.cleanup.add_many(entries)
         self.evidence.write_json("cleanup_manifest.json", self.cleanup.as_dict())
 
-    def _write_case_runtime_log(
+    def _write_runtime_log(
         self,
-        case_name: str,
+        relative: Path,
         *,
         stdout_text: str,
         stderr_text: str,
@@ -175,12 +176,24 @@ class RigRunner:
         if self.public_safe:
             payload = self.redactor.redact_text(payload)
 
-        safe_name = self.evidence.safe_case_name(case_name)
-        relative = Path("logs") / "cases" / f"{safe_name}.log"
         destination = self.evidence.root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(payload, encoding="utf-8")
         return relative.as_posix()
+
+    def _write_case_runtime_log(
+        self,
+        case_name: str,
+        *,
+        stdout_text: str,
+        stderr_text: str,
+    ) -> str | None:
+        safe_name = self.evidence.safe_case_name(case_name)
+        return self._write_runtime_log(
+            Path("logs") / "cases" / f"{safe_name}.log",
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+        )
 
     def _environment(self) -> dict[str, Any]:
         provenance = {
@@ -433,7 +446,19 @@ class RigRunner:
 
         try:
             self.runtime = runtime_factory(self.config)
-            self.runtime.start()
+            startup_stdout = io.StringIO()
+            startup_stderr = io.StringIO()
+            if self.options.verbose:
+                self.runtime.start()
+                startup_log_path = None
+            else:
+                with contextlib.redirect_stdout(startup_stdout), contextlib.redirect_stderr(startup_stderr):
+                    self.runtime.start()
+                startup_log_path = self._write_runtime_log(
+                    Path("logs") / "runtime-start.log",
+                    stdout_text=startup_stdout.getvalue(),
+                    stderr_text=startup_stderr.getvalue(),
+                )
             # Runtime construction may migrate or seed its own disposable state.
             # Protected-state comparison begins only after that normal setup is
             # complete, before the campaign is allowed to issue write cases.
@@ -449,6 +474,11 @@ class RigRunner:
             )
             health = self.runtime.health()
             healthy = health.get("ready") is True
+            if not self.options.verbose and not self.options.quiet:
+                self.console.initialization(
+                    health=health,
+                    startup_log_path=startup_log_path,
+                )
             self._record(
                 suite="PREFLIGHT",
                 name="Runtime adapter initialized",
@@ -479,6 +509,15 @@ class RigRunner:
                 )
                 return
         except Exception as exc:
+            if not self.options.verbose:
+                try:
+                    self._write_runtime_log(
+                        Path("logs") / "runtime-start.log",
+                        stdout_text=locals().get("startup_stdout", io.StringIO()).getvalue(),
+                        stderr_text=locals().get("startup_stderr", io.StringIO()).getvalue(),
+                    )
+                except Exception:
+                    pass
             error_path = self.evidence.write_error("runtime_preflight", exc)
             self._record(
                 suite="PREFLIGHT",
