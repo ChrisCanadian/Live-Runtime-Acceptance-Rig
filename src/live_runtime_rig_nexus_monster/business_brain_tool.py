@@ -87,14 +87,39 @@ class BusinessBrainAttributionTool:
             f"[BB TOOL] governed execution START | turn={context.turn_id} "
             f"proposal={context.provider_proposal_id or 'NONE'}"
         )
-        nexus_handoff, trace = resolve_attribution_for_nexus(
-            query,
-            moon_root=self.moon_root,
-            correlation_id=context.correlation_id,
-            nexus_turn_id=context.turn_id,
-            nexus_execution_id=execution_id,
-            progress=self._progress,
-        )
+        try:
+            nexus_handoff, trace = resolve_attribution_for_nexus(
+                query,
+                moon_root=self.moon_root,
+                correlation_id=context.correlation_id,
+                nexus_turn_id=context.turn_id,
+                nexus_execution_id=execution_id,
+                progress=self._progress,
+            )
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            error_type = type(exc).__name__
+            error_message = str(exc).strip()[:800]
+            _emit(
+                "[BB TOOL] governed execution FAILED | "
+                f"elapsed={elapsed_ms / 1000:.1f}s "
+                f"error={error_type} detail={error_message or '[no message]'}"
+            )
+            failure = {
+                "failure_stage": "business_brain_attribution",
+                "error_type": error_type,
+                "error_message": error_message,
+                "provider_projection": {
+                    "status": "FAILED",
+                    "failure_stage": "business_brain_attribution",
+                    "error_type": error_type,
+                },
+            }
+            return self.tool_result_factory(
+                "FAILED",
+                failure,
+                error_code=f"BUSINESS_BRAIN_{error_type.upper()}",
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000
 
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
