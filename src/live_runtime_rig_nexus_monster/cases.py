@@ -548,6 +548,7 @@ class AttributionKnowledgeChainCase:
         "HZK independently verifies the selected knowledge packet",
         "HZK state remains unchanged and authority remains reference-only",
         "HZK passes forward relevant attribution/lineage/provenance/authority evidence",
+        "HZK exports a treaty v0.3 Council grant with no mutation authority",
         "Historical/compatibility distinctions survive HZK admission",
         "Business Brain stores the resolution only as draft_memory",
         "Business Brain source remains immutable with complete readback",
@@ -556,6 +557,7 @@ class AttributionKnowledgeChainCase:
         "Kernelized Nexus releases the packet-only final synthesis",
         "Nexus answer contains substantive attribution evidence",
         "Receipt trace records the contributing Nexus functions independently of answer prose",
+        "HZK validates Nexus return receipt against exact treaty grant and payload",
         "Final Nexus synthesis respects claim guardrails without requiring plumbing narration",
         "Original attribution incident is not supplied to final Nexus synthesis",
     )
@@ -575,6 +577,7 @@ class AttributionKnowledgeChainCase:
         moon_result = dict(result.get("moon_result") or {})
         moon_score = dict(result.get("moon_score") or {})
         hzk = dict(result.get("hzk") or {})
+        hzk_treaty_return = dict(result.get("hzk_treaty_return") or {})
         bb = dict(result.get("business_brain") or {})
         nexus = dict(result.get("nexus") or {})
         trace = dict(result.get("provenance_trace") or {})
@@ -658,7 +661,13 @@ class AttributionKnowledgeChainCase:
                 )
             )
 
-        trace_lines.extend(("", f"HZK admitted {len(hzk_entries)} item(s):"))
+        trace_lines.extend((
+            "",
+            f"HZK admitted {len(hzk_entries)} item(s):",
+            f"  treaty: {hzk.get('treaty_version')} / "
+            f"{(hzk.get('treaty_grant') or {}).get('handoff_profile') if isinstance(hzk.get('treaty_grant'), Mapping) else None} / "
+            f"mutation={(hzk.get('treaty_grant') or {}).get('mutation_contract') if isinstance(hzk.get('treaty_grant'), Mapping) else None}",
+        ))
         for item in hzk_entries:
             concepts = ", ".join(str(v) for v in (item.get("concepts") or []))
             trace_lines.append(
@@ -680,6 +689,8 @@ class AttributionKnowledgeChainCase:
         )
         trace_lines.extend(
             (
+                "",
+                f"HZK return receipt validation: {hzk_treaty_return.get('status')}",
                 "",
                 "Nexus receipt trace:",
                 "  " + ", ".join(function_labels),
@@ -741,6 +752,26 @@ class AttributionKnowledgeChainCase:
                 result.get("hzk_relevance_ok") is True,
                 {"attribution", "lineage", "provenance", "authority"},
                 set(result.get("hzk_concepts") or ()),
+            ),
+            _check(
+                "HZK exports a treaty v0.3 Council grant with no mutation authority",
+                isinstance(hzk.get("treaty_grant"), Mapping)
+                and hzk.get("treaty_version") == "hzk-nexus/0.3"
+                and (hzk.get("treaty_grant") or {}).get("handoff_profile") == "COUNCIL"
+                and (hzk.get("treaty_grant") or {}).get("mutation_contract") == "NONE",
+                {
+                    "contract_version": "hzk-nexus/0.3",
+                    "handoff_profile": "COUNCIL",
+                    "mutation_contract": "NONE",
+                },
+                {
+                    "contract_version": hzk.get("treaty_version"),
+                    "handoff_profile": (hzk.get("treaty_grant") or {}).get("handoff_profile")
+                    if isinstance(hzk.get("treaty_grant"), Mapping) else None,
+                    "mutation_contract": (hzk.get("treaty_grant") or {}).get("mutation_contract")
+                    if isinstance(hzk.get("treaty_grant"), Mapping) else None,
+                    "source_mode": hzk.get("source_mode"),
+                },
             ),
             _check(
                 "Historical/compatibility distinctions survive HZK admission",
@@ -813,6 +844,13 @@ class AttributionKnowledgeChainCase:
                 },
             ),
             _check(
+                "HZK validates Nexus return receipt against exact treaty grant and payload",
+                hzk_treaty_return.get("status") == "PASS"
+                and hzk_treaty_return.get("valid") is True,
+                {"status": "PASS", "valid": True},
+                hzk_treaty_return,
+            ),
+            _check(
                 "Final Nexus synthesis respects claim guardrails without requiring plumbing narration",
                 nexus.get("guardrails_ok") is True,
                 True,
@@ -832,6 +870,10 @@ class AttributionKnowledgeChainCase:
                 "selected_moon_sources": [item.get("path") for item in selected_moon],
                 "hzk": {
                     "source_revision": hzk.get("source_revision"),
+                    "source_mode": hzk.get("source_mode"),
+                    "treaty_version": hzk.get("treaty_version"),
+                    "treaty_grant_sha256": hzk.get("treaty_grant_sha256"),
+                    "return_validation": hzk_treaty_return,
                     "packet_id": hzk.get("packet_id"),
                     "constitutional_status": hzk.get("constitutional_status"),
                     "state_unchanged": hzk.get("state_unchanged"),
