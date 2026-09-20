@@ -9,6 +9,7 @@ prebuilt chain packet is supplied by the harness.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import threading
@@ -150,17 +151,79 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         if str(item.get("tool_id") or "") == "business_brain.resolve_attribution"
     ]
     bb_execution = bb_executions[0] if len(bb_executions) == 1 else None
-    bounded_result = (
+    nexus_handoff = (
         dict(bb_execution.get("result") or {})
         if isinstance(bb_execution, Mapping)
         and isinstance(bb_execution.get("result"), Mapping)
         else {}
     )
-    bounded_serialized = json.dumps(
-        bounded_result,
+    handoff_serialized = json.dumps(
+        nexus_handoff,
         sort_keys=True,
         ensure_ascii=False,
     )
+
+    trace_payload = (
+        dict((business_brain_trace or {}).get("trace") or {})
+        if isinstance(business_brain_trace, Mapping)
+        else {}
+    )
+    traced_hzk = (
+        dict(trace_payload.get("hzk") or {})
+        if isinstance(trace_payload.get("hzk"), Mapping)
+        else {}
+    )
+    traced_grant = traced_hzk.get("treaty_grant")
+    returned_grant = nexus_handoff.get("hzk_grant")
+    exact_hzk_grant_to_nexus = (
+        isinstance(traced_grant, Mapping)
+        and isinstance(returned_grant, Mapping)
+        and dict(traced_grant) == dict(returned_grant)
+    )
+
+    nexus_return_receipt = {}
+    hzk_return_validation = {}
+    if isinstance(returned_grant, Mapping) and returned_grant:
+        from integration_lab.hzk_business_brain_knowledge import (
+            validate_nexus_treaty_return,
+        )
+
+        grant_sha256 = str(traced_hzk.get("treaty_grant_sha256") or "")
+        payload_sha256 = str(
+            (returned_grant.get("integrity") or {}).get("payload_sha256") or ""
+        )
+        if not grant_sha256 or len(grant_sha256) != 64:
+            raise RuntimeError("Exact HZK grant hash unavailable after Nexus tool execution")
+        if not payload_sha256 or len(payload_sha256) != 64:
+            raise RuntimeError("Exact HZK payload hash unavailable after Nexus tool execution")
+
+        outcome_material = (
+            f"{turn_id}:{bb_execution.get('execution_id') if isinstance(bb_execution, Mapping) else ''}:"
+            f"{body.get('state')}:{final_text}"
+        )
+        nexus_return_receipt = {
+            "contract_version": str(returned_grant.get("contract_version") or ""),
+            "exchange_id": str(returned_grant.get("exchange_id") or ""),
+            "grant_sha256": grant_sha256,
+            "receipt_id": "nxr_" + hashlib.sha256(
+                outcome_material.encode("utf-8")
+            ).hexdigest()[:24],
+            "disposition": (
+                "CONTEXTUALIZED"
+                if body.get("state") == "released"
+                else "REJECTED"
+            ),
+            "consumed_payload_sha256": payload_sha256,
+            "outcome_ref": str(body.get("turn_id") or turn_id),
+            "note": (
+                "Acceptance observer bound this receipt after the canonical Nexus "
+                "turn consumed the exact HZK grant through the governed Business Brain tool."
+            ),
+        }
+        hzk_return_validation = validate_nexus_treaty_return(
+            dict(returned_grant),
+            nexus_return_receipt,
+        )
 
     first_round = provider_telemetry[0] if provider_telemetry else {}
     final_round = provider_telemetry[-1] if provider_telemetry else {}
@@ -182,12 +245,14 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         "business_brain_executions": bb_executions,
         "business_brain_execution": bb_execution,
         "business_brain_trace": business_brain_trace,
-        "bounded_result": bounded_result,
-        "bounded_result_bytes": len(bounded_serialized.encode("utf-8")),
-        "bounded_result_leaks_raw_hzk": (
-            "payload_text" in bounded_serialized
-            or "treaty_grant" in bounded_serialized
+        "nexus_handoff": nexus_handoff,
+        "nexus_handoff_bytes": len(handoff_serialized.encode("utf-8")),
+        "exact_hzk_grant_to_nexus": exact_hzk_grant_to_nexus,
+        "moon_business_brain_handoff_present": isinstance(
+            nexus_handoff.get("moon_business_brain_handoff"), Mapping
         ),
+        "nexus_return_receipt": nexus_return_receipt,
+        "hzk_return_validation": hzk_return_validation,
         "provider_telemetry": provider_telemetry,
         "provider_round_count": len(provider_telemetry),
         "first_round": first_round,
