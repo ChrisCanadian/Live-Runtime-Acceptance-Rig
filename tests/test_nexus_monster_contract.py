@@ -130,8 +130,8 @@ def test_monster_declares_exact_check_level_plan(monkeypatch):
         for case in extended
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(extended_planned) == 77
-    assert len(set(extended_planned)) == 77
+    assert len(extended_planned) == 79
+    assert len(set(extended_planned)) == 79
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
