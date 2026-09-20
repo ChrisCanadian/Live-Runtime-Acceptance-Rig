@@ -130,8 +130,8 @@ def test_monster_declares_exact_check_level_plan(monkeypatch):
         for case in extended
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(extended_planned) == 79
-    assert len(set(extended_planned)) == 79
+    assert len(extended_planned) == 81
+    assert len(set(extended_planned)) == 81
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -370,3 +370,35 @@ def test_monster_continuity_and_isolation_cases_do_not_depend_on_tools():
     assert "include_tools=False" in isolation
     assert isolation.count("include_tools=False") >= 2
     assert "blocking_reason" in isolation
+
+
+def test_attribution_lane_requires_model_selected_business_brain_without_routing_bumper():
+    root = Path(__file__).parents[1]
+    chain = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "attribution_chain.py"
+    ).read_text(encoding="utf-8")
+    tool = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "business_brain_tool.py"
+    ).read_text(encoding="utf-8")
+    adapter = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+
+    scenario = chain.split('ATTRIBUTION_SCENARIO = """', 1)[1].split('"""', 1)[0].casefold()
+    for forbidden in (
+        "business brain",
+        "moon source",
+        "hzk",
+        "use a tool",
+        "call the tool",
+        "required_tool_id",
+    ):
+        assert forbidden not in scenario
+
+    assert 'TOOL_ID = "business_brain.resolve_attribution"' in tool
+    assert 'risk_class="READ_ONLY"' in tool
+    assert 'required_permissions=frozenset({TOOL_PERMISSION})' in tool
+    assert "runtime.v5_runtime.tools.register(manifest, handler)" in tool
+    assert "tool_execution_trace" in adapter
+    assert "provider_proposal_id" in adapter
+    assert "provider_runtime_controls_factory=self._provider_runtime_controls" in adapter
