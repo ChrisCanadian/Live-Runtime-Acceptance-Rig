@@ -254,6 +254,9 @@ class KernelizedMonsterRuntimeAdapter:
             ),
             "available_tools": available_tools,
             "available_tool_count": len(available_tools),
+            "tool_schema_bytes": _safe_json_bytes(
+                tuple(getattr(request, "available_tools", ()) or ())
+            ),
             "tool_result_count": len(tool_results),
             "tool_result_bytes": _safe_json_bytes(tool_results),
             "started_monotonic": started,
@@ -268,7 +271,7 @@ class KernelizedMonsterRuntimeAdapter:
                 f"[NEXUS] provider round {round_number} START | "
                 f"system={record['system_bytes']}B "
                 f"user={record['user_bytes']}B "
-                f"tools={len(available_tools)} "
+                f"tools={len(available_tools)}/{record['tool_schema_bytes']}B "
                 f"tool_results={len(tool_results)} "
                 f"tool_result_bytes={record['tool_result_bytes']}B"
             )
