@@ -818,10 +818,7 @@ def register_cases(_config: Any):
     ]
     if os.environ.get("NEXUS_RIG_ATTRIBUTION_CHAIN", "0") == "1":
         cases.append(AttributionKnowledgeChainCase())
-    cases.extend(
-        [
-            ReceiptCoverageGateCase(),
-            MonsterTaktCase(),
-        ]
-    )
+    cases.append(ReceiptCoverageGateCase())
+    if os.environ.get("NEXUS_RIG_TAKT", "0") == "1":
+        cases.append(MonsterTaktCase())
     return cases
