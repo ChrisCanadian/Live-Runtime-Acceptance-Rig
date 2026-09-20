@@ -413,8 +413,8 @@ class KernelizedMonsterRuntimeAdapter:
             "embedding_url": str(getattr(embedding_manager, "ollama_url", "")),
         }
 
-    @timed_method("runtime.start.total")
     def start(self) -> None:
+        start_total_started = time.perf_counter_ns()
         if self._assembled is not None:
             raise RuntimeError("monster runtime adapter already started")
         if not self.production_checkout.is_dir():
@@ -509,6 +509,11 @@ class KernelizedMonsterRuntimeAdapter:
         self._assembled = assembled
         self._app = app
         self._client = _InProcessASGIClient(app)
+        self._takt.record(
+            "runtime.start.total",
+            (time.perf_counter_ns() - start_total_started) / 1_000_000,
+            boundary="nexus",
+        )
 
     def close(self) -> None:
         self._takt.write(self.artifact_path)
