@@ -17,6 +17,8 @@ $GeneratedScript = Join-Path $PSScriptRoot ".run_nexus_attribution_takt_monster_
 
 $OldNdka = '0b7ae91064aae6e1351c9789d6722dd60b0f290d'
 $NewNdka = 'dcf47598ad441fbeb63dbb4f662adb1b0b1c3e2c'
+$OldV5 = '3338a101acf3c9e334e9c194d00b0ea11fb60ea9'
+$NewV5 = 'f876726bcbd3c21dab710074a324e9af926379aa'
 $OldBusinessBrain = '9e42fe0c6d6254745dc52c73b7d6755c0342932e'
 $NewBusinessBrain = 'd1aa0a6e25da0a97f0fe6fef54c4406c0328076d'
 
@@ -27,7 +29,10 @@ if (-not $text.Contains($OldNdka)) {
 if (-not $text.Contains($OldBusinessBrain)) {
     throw "Base Monster launcher no longer contains expected Business Brain pin $OldBusinessBrain"
 }
-$text = $text.Replace($OldNdka, $NewNdka).Replace($OldBusinessBrain, $NewBusinessBrain)
+if (-not $text.Contains($OldV5)) {
+    throw "Base Monster launcher no longer contains expected V5 pin $OldV5"
+}
+$text = $text.Replace($OldNdka, $NewNdka).Replace($OldV5, $NewV5).Replace($OldBusinessBrain, $NewBusinessBrain)
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($GeneratedScript, $text, $Utf8NoBom)
