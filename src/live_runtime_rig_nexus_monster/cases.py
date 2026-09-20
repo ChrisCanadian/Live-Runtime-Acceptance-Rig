@@ -595,7 +595,7 @@ class AttributionKnowledgeChainCase:
         "Kernelized Nexus releases the final answer after the tool round",
         "Final Nexus answer contains substantive attribution resolution",
         "Nexus receipt chain includes tools provider evidence correction and release",
-        "Provider telemetry proves round two consumed the exact Business Brain handoff",
+        "Provider telemetry proves round two consumed the bounded Business Brain projection",
         "Completed Nexus provider rounds expose token and latency telemetry",
         "Full Business Brain handshake evidence remains inspectable outside model context",
     )
@@ -698,7 +698,7 @@ class AttributionKnowledgeChainCase:
             len(provider_telemetry) >= 2
             and int(first_round.get("tool_result_count") or 0) == 0
             and int(final_round.get("tool_result_count") or 0) >= 1
-            and result.get("exact_handoff_entered_second_round") is True
+            and result.get("exact_projection_entered_second_round") is True
         )
         completed_rounds = [
             item for item in provider_telemetry if item.get("completed") is True
@@ -778,8 +778,10 @@ class AttributionKnowledgeChainCase:
             f"HZK treaty wire delivered: {transport.get('hzk_grant_wire_bytes')} bytes",
             f"Moon -> Business Brain handoff: {transport.get('moon_business_brain_handoff_bytes')} bytes",
             f"Total Nexus tool result: {transport.get('nexus_tool_result_bytes')} bytes",
-            f"Exact BB handoff entered Nexus round 2: {result.get('exact_handoff_entered_second_round')}",
-            f"BB handoff SHA256: {result.get('nexus_handoff_sha256')}",
+            f"Provider projection: {transport.get('provider_projection_bytes')} bytes",
+            f"Exact BB provider projection entered Nexus round 2: {result.get('exact_projection_entered_second_round')}",
+            f"Full BB handoff SHA256: {result.get('nexus_handoff_sha256')}",
+            f"Provider projection SHA256: {result.get('provider_projection_sha256')}",
             f"HZK treaty return validation: {treaty_return.get('status')}",
             f"Business Brain state: {(moon_bb_handoff.get('business_brain_artifact') or {}).get('state')}",
             "",
@@ -1010,20 +1012,32 @@ class AttributionKnowledgeChainCase:
                 receipt_ids,
             ),
             _check(
-                "Provider telemetry proves round two consumed the exact Business Brain handoff",
-                second_round_ok,
+                "Provider telemetry proves round two consumed the bounded Business Brain projection",
+                second_round_ok
+                and result.get("provider_projection_contains_raw_hzk_payload") is False
+                and int(result.get("provider_projection_bytes") or 0) > 0
+                and int(result.get("provider_projection_bytes") or 0)
+                < int(transport.get("hzk_grant_wire_bytes") or 0),
                 {
                     "rounds": ">=2",
                     "first_tool_results": 0,
-                    "exact_business_brain_handoff": True,
+                    "exact_provider_projection": True,
+                    "raw_hzk_payload_in_provider_projection": False,
+                    "projection_smaller_than_hzk_grant": True,
                 },
                 {
                     "rounds": len(provider_telemetry),
                     "first_tool_results": first_round.get("tool_result_count"),
                     "final_tool_results": final_round.get("tool_result_count"),
-                    "handoff_sha256": result.get("nexus_handoff_sha256"),
-                    "exact_handoff_entered_second_round": result.get(
-                        "exact_handoff_entered_second_round"
+                    "full_handoff_sha256": result.get("nexus_handoff_sha256"),
+                    "provider_projection_sha256": result.get("provider_projection_sha256"),
+                    "provider_projection_bytes": result.get("provider_projection_bytes"),
+                    "hzk_grant_wire_bytes": transport.get("hzk_grant_wire_bytes"),
+                    "provider_projection_contains_raw_hzk_payload": result.get(
+                        "provider_projection_contains_raw_hzk_payload"
+                    ),
+                    "exact_projection_entered_second_round": result.get(
+                        "exact_projection_entered_second_round"
                     ),
                     "business_brain_tool_results": result.get(
                         "second_round_business_brain_tool_results"
