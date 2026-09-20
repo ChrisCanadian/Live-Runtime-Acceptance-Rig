@@ -147,6 +147,7 @@ class KernelizedMonsterRuntimeAdapter:
             if not raw_v5_checkout or raw_v5_checkout.upper() == "STAGED"
             else Path(raw_v5_checkout).resolve()
         )
+        self.v5_expected_sha = os.environ.get("NEXUS_RIG_V5_EXPECTED_SHA", "").strip() or None
         self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
         self.artifact_path = Path(
             os.environ.get("NEXUS_RIG_ARTIFACT_PATH", str(config.evidence_dir / "nexus-artifacts"))
@@ -448,6 +449,7 @@ class KernelizedMonsterRuntimeAdapter:
                 production_checkout=self.production_checkout,
                 legacy_state_db_path=self.legacy_db,
                 v5_checkout=self.v5_checkout,
+                v5_expected_sha=self.v5_expected_sha,
                 allow_mode_lifecycle_writes=True,
                 allow_legacy_memory_writes=True,
                 allow_canonical_memory_writes=True,
