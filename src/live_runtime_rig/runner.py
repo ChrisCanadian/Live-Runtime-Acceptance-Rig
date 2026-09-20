@@ -593,6 +593,8 @@ class RigRunner:
                                 self._executed_acceptance_checks += 1
                         self._register_cleanup_entries(result.cleanup_entries)
                         state.update(result.state_updates)
+                        if result.operator_output:
+                            self.console.operator_output(result.operator_output)
                 except Exception as exc:
                     if not self.options.verbose:
                         runtime_log_path = self._write_case_runtime_log(

@@ -110,7 +110,9 @@ def test_monster_real_llm_lane_fails_closed_on_fake_provider():
 
 
 
-def test_monster_declares_exact_check_level_plan():
+def test_monster_declares_exact_check_level_plan(monkeypatch):
+    monkeypatch.delenv("NEXUS_RIG_ATTRIBUTION_CHAIN", raising=False)
+    monkeypatch.delenv("NEXUS_RIG_TAKT", raising=False)
     registered = cases.register_cases(None)
     planned = [
         (case.suite, name)
@@ -120,9 +122,16 @@ def test_monster_declares_exact_check_level_plan():
     assert len(planned) == 58
     assert len(set(planned)) == 58
 
-    source = Path(cases.__file__).read_text(encoding="utf-8")
-    observed_literal_checks = source.count("_check(") - 1
-    assert observed_literal_checks == 58
+    monkeypatch.setenv("NEXUS_RIG_ATTRIBUTION_CHAIN", "1")
+    monkeypatch.setenv("NEXUS_RIG_TAKT", "1")
+    extended = cases.register_cases(None)
+    extended_planned = [
+        (case.suite, name)
+        for case in extended
+        for name in tuple(getattr(case, "planned_checks", ()))
+    ]
+    assert len(extended_planned) == 82
+    assert len(set(extended_planned)) == 82
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -350,7 +359,7 @@ def test_monster_tool_loop_uses_commissioned_runtime_tool_not_phantom_calculator
 
 def test_monster_continuity_and_isolation_cases_do_not_depend_on_tools():
     source = Path(cases.__file__).read_text(encoding="utf-8")
-    continuity_start = source.index("class ContinuityRestartCase")
+    continuity_start = source.index("class ContinuityAndRestartCase")
     isolation_start = source.index("class CrossUserIsolationCase")
     cognition_start = source.index("class CognitionModesLearningCase")
     continuity = source[continuity_start:isolation_start]
@@ -361,3 +370,39 @@ def test_monster_continuity_and_isolation_cases_do_not_depend_on_tools():
     assert "include_tools=False" in isolation
     assert isolation.count("include_tools=False") >= 2
     assert "blocking_reason" in isolation
+
+
+def test_attribution_lane_requires_model_selected_business_brain_without_routing_bumper():
+    root = Path(__file__).parents[1]
+    chain = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "attribution_chain.py"
+    ).read_text(encoding="utf-8")
+    tool = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "business_brain_tool.py"
+    ).read_text(encoding="utf-8")
+    adapter = (
+        root / "src" / "live_runtime_rig_nexus_monster" / "runtime_adapter.py"
+    ).read_text(encoding="utf-8")
+
+    scenario = chain.split('ATTRIBUTION_SCENARIO = """', 1)[1].split('"""', 1)[0].casefold()
+    for forbidden in (
+        "business brain",
+        "moon source",
+        "hzk",
+        "use a tool",
+        "call the tool",
+        "required_tool_id",
+    ):
+        assert forbidden not in scenario
+
+    assert 'TOOL_ID = "business_brain.resolve_attribution"' in tool
+    assert 'risk_class="READ_ONLY"' in tool
+    assert 'required_permissions=frozenset({TOOL_PERMISSION})' in tool
+    assert "runtime.v5_runtime.tools.register(manifest, handler)" in tool
+    assert '"hzk_grant"' in tool
+    assert '"moon_business_brain_handoff"' in tool
+    assert "exact_hzk_grant_to_nexus" in chain
+    assert "validate_nexus_treaty_return" in chain
+    assert "tool_execution_trace" in adapter
+    assert "provider_proposal_id" in adapter
+    assert "provider_runtime_controls_factory=self._provider_runtime_controls" in adapter

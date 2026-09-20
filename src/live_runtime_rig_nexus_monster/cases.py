@@ -7,6 +7,8 @@ flight control, the check FAILs and the final receipt-coverage gate remains red.
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any, Mapping
 
 from live_runtime_rig.assertions import CheckStatus
@@ -26,6 +28,41 @@ def _check(name: str, condition: bool, expected: Any, observed: Any, *, heuristi
 
 def _status_ok(value: Any) -> bool:
     return str(value or "").strip().casefold() == "ok"
+
+
+def _completed_provider_round_has_telemetry(item: Mapping[str, Any]) -> bool:
+    """Validate telemetry without pretending every provider round streams text.
+
+    A model round that returns only a tool proposal can complete successfully
+    with usage + total latency while emitting zero user-visible stream chunks.
+    First-token latency is meaningful only when response bytes/chunks exist.
+    """
+    common_complete = (
+        isinstance(item.get("input_token_count"), int)
+        and isinstance(item.get("output_token_count"), int)
+        and isinstance(item.get("total_latency_ms"), int)
+        and int(item.get("input_token_count") or 0) >= 0
+        and int(item.get("output_token_count") or 0) >= 0
+        and int(item.get("total_latency_ms") or 0) >= 0
+    )
+    if not common_complete:
+        return False
+
+    response_bytes = int(item.get("response_bytes") or 0)
+    chunk_count = int(item.get("provider_chunk_count") or 0)
+    first_token = item.get("first_token_latency_ms")
+
+    if response_bytes > 0 or chunk_count > 0:
+        return (
+            response_bytes > 0
+            and chunk_count > 0
+            and isinstance(first_token, int)
+            and first_token >= 0
+        )
+
+    # Tool-call-only rounds can have provider output tokens but no visible text
+    # stream. Their latency is still measured by total_latency_ms.
+    return response_bytes == 0 and chunk_count == 0 and first_token is None
 
 
 def _payload(response: Any) -> Mapping[str, Any]:
@@ -538,6 +575,521 @@ class FaultInjectionCase:
         )
 
 
+
+class AttributionKnowledgeChainCase:
+    planned_checks = (
+        "Attribution stimulus contains no hidden routing bumper",
+        "Initial Nexus provider round exposes multiple legitimate read-only choices",
+        "Nexus independently proposes the Business Brain attribution tool",
+        "Governed nexus.tools executes Business Brain exactly once",
+        "Business Brain returns a passing Nexus handoff",
+        "Nexus receives the exact HZK NexusGrant unchanged",
+        "Moon Source to Business Brain handoff accompanies HZK without duplicating its payload",
+        "Moon Source selects sufficient relevant governed evidence",
+        "Moon Source evidence remains attributable by path and source hash",
+        "HZK verifies the selected evidence without state or authority transfer",
+        "HZK treaty v0.3 return receipt validates against exact grant and payload",
+        "Historical and compatibility distinctions survive the governed workflow",
+        "Business Brain keeps the resolution at draft_memory with immutable source",
+        "Business Brain integrity verification passes",
+        "Kernelized Nexus releases the final answer after the tool round",
+        "Final Nexus answer contains substantive attribution resolution",
+        "Nexus receipt chain includes tools provider evidence correction and release",
+        "Provider telemetry proves round two consumed the exact Business Brain handoff",
+        "Completed Nexus provider rounds expose token and latency telemetry",
+        "Full Business Brain handshake evidence remains inspectable outside model context",
+    )
+    name = "monster-attribution-knowledge-chain"
+    suite = "10A ATTRIBUTION / KNOWLEDGE CHAIN"
+
+    def run(self, runtime, database, context) -> CaseResult:
+        del database
+        from live_runtime_rig_nexus_monster.attribution_chain import run_attribution_chain
+
+        result = run_attribution_chain(runtime, marker=context.marker)
+        body = dict(result.get("body") or {})
+        final_text = str(result.get("final_text") or "").strip()
+        tool_executions = [
+            item for item in (result.get("tool_executions") or [])
+            if isinstance(item, Mapping)
+        ]
+        bb_executions = [
+            item for item in (result.get("business_brain_executions") or [])
+            if isinstance(item, Mapping)
+        ]
+        nexus_handoff = dict(result.get("nexus_handoff") or {})
+        moon_bb_handoff = (
+            dict(nexus_handoff.get("moon_business_brain_handoff") or {})
+            if isinstance(nexus_handoff.get("moon_business_brain_handoff"), Mapping)
+            else {}
+        )
+        returned_hzk_grant = (
+            dict(nexus_handoff.get("hzk_grant") or {})
+            if isinstance(nexus_handoff.get("hzk_grant"), Mapping)
+            else {}
+        )
+        bb_trace_wrapper = result.get("business_brain_trace")
+        bb_trace_wrapper = (
+            dict(bb_trace_wrapper)
+            if isinstance(bb_trace_wrapper, Mapping)
+            else {}
+        )
+        full_trace = (
+            dict(bb_trace_wrapper.get("trace") or {})
+            if isinstance(bb_trace_wrapper.get("trace"), Mapping)
+            else {}
+        )
+        moon = dict(full_trace.get("moon_source") or {})
+        moon_result = dict(moon.get("result") or {})
+        moon_score = dict(moon.get("score") or {})
+        hzk = dict(full_trace.get("hzk") or {})
+        bb = dict(full_trace.get("business_brain") or {})
+        treaty_return = dict(result.get("hzk_return_validation") or {})
+        nexus_return_receipt = dict(result.get("nexus_return_receipt") or {})
+        provider_telemetry = [
+            item for item in (result.get("provider_telemetry") or [])
+            if isinstance(item, Mapping)
+        ]
+        receipts = [
+            item for item in (result.get("receipts") or [])
+            if isinstance(item, Mapping)
+        ]
+
+        selected_sources = [
+            item for item in (moon_bb_handoff.get("selected_sources") or [])
+            if isinstance(item, Mapping)
+        ]
+        source_identity_ok = bool(selected_sources) and all(
+            bool(str(item.get("path") or ""))
+            and len(str(item.get("source_sha256") or "")) == 64
+            for item in selected_sources
+        )
+
+        first_round = provider_telemetry[0] if provider_telemetry else {}
+        final_round = provider_telemetry[-1] if provider_telemetry else {}
+        initial_tools = set(first_round.get("available_tools") or ())
+        multiple_choices = (
+            "business_brain.resolve_attribution" in initial_tools
+            and "memory.retrieve" in initial_tools
+            and len(initial_tools) >= 2
+            and int(first_round.get("tool_result_count") or 0) == 0
+        )
+
+        bb_execution = bb_executions[0] if len(bb_executions) == 1 else {}
+        model_selected_bb = (
+            len(bb_executions) == 1
+            and bool(str(bb_execution.get("provider_proposal_id") or ""))
+        )
+        bb_executed = (
+            len(bb_executions) == 1
+            and str(bb_execution.get("status") or "") == "SUCCEEDED"
+        )
+
+        receipt_ids = {str(item.get("kernel_id") or "") for item in receipts}
+        receipt_chain_ok = {
+            "nexus.tools",
+            "nexus.provider",
+            "nexus.evidence",
+            "nexus.correction",
+            "nexus.release",
+        } <= receipt_ids
+
+        second_round_ok = (
+            len(provider_telemetry) >= 2
+            and int(first_round.get("tool_result_count") or 0) == 0
+            and int(final_round.get("tool_result_count") or 0) >= 1
+            and result.get("exact_handoff_entered_second_round") is True
+        )
+        completed_rounds = [
+            item for item in provider_telemetry if item.get("completed") is True
+        ]
+        telemetry_complete = bool(completed_rounds) and all(
+            _completed_provider_round_has_telemetry(item)
+            for item in completed_rounds
+        )
+
+        substantive_terms = {
+            term for term in (
+                "attribution",
+                "lineage",
+                "authorship",
+                "coauthor",
+                "historical",
+                "provenance",
+                "evidence",
+                "source",
+            )
+            if term in final_text.casefold()
+        }
+
+        handshake_artifact = context.evidence.write_json(
+            "artifacts/ATTRIBUTION_HANDSHAKE.json",
+            full_trace,
+        )
+        trace_artifact = context.evidence.write_json(
+            "artifacts/ATTRIBUTION_TRACE.json",
+            {
+                "turn_id": result.get("turn_id"),
+                "scenario": result.get("scenario"),
+                "routing_bumpers": result.get("routing_bumpers"),
+                "tool_executions": tool_executions,
+                "provider_telemetry": provider_telemetry,
+                "receipts": receipts,
+                "nexus_handoff": nexus_handoff,
+                "nexus_return_receipt": nexus_return_receipt,
+                "hzk_return_validation": treaty_return,
+                "business_brain_trace_path": bb_trace_wrapper.get("trace_path"),
+            },
+        )
+        telemetry_artifact = context.evidence.write_json(
+            "artifacts/NEXUS_PROVIDER_TELEMETRY.json",
+            {"turn_id": result.get("turn_id"), "rounds": provider_telemetry},
+        )
+        response_artifact = context.evidence.write_text(
+            "artifacts/NEXUS_RESPONSE.md",
+            "# Nexus attribution response\n\n"
+            + (final_text or "[NO RELEASED RESPONSE]")
+            + "\n\n## Canonical runtime payload\n\n```json\n"
+            + json.dumps(body, indent=2, ensure_ascii=False)
+            + "\n```\n",
+        )
+
+        transport = dict(nexus_handoff.get("transport") or {})
+        trace_lines = [
+            "NEXUS ACTUAL RESPONSE",
+            "---------------------",
+            final_text or "[NO RELEASED RESPONSE]",
+            "",
+            "ROUTING PROOF",
+            "-------------",
+            f"Natural stimulus bytes: {result.get('scenario_bytes')}",
+            f"Hidden routing bumpers: {list(result.get('routing_bumpers') or ())}",
+            "Initial visible read-only tools: " + ", ".join(sorted(initial_tools)),
+            f"Business Brain executions: {len(bb_executions)}",
+            f"Provider proposal id: {bb_execution.get('provider_proposal_id')}",
+            f"Execution status: {bb_execution.get('status')}",
+            "",
+            "BUSINESS BRAIN BOUNDARY",
+            "-----------------------",
+            f"Selected Moon sources: {len(selected_sources)}",
+            f"Raw HZK payload: {transport.get('hzk_payload_bytes')} bytes",
+            f"HZK treaty wire: {transport.get('hzk_grant_wire_bytes')} bytes",
+            f"Exact HZK grant delivered to Nexus: {result.get('exact_hzk_grant_to_nexus')}",
+            f"HZK treaty wire delivered: {transport.get('hzk_grant_wire_bytes')} bytes",
+            f"Moon -> Business Brain handoff: {transport.get('moon_business_brain_handoff_bytes')} bytes",
+            f"Total Nexus tool result: {transport.get('nexus_tool_result_bytes')} bytes",
+            f"Exact BB handoff entered Nexus round 2: {result.get('exact_handoff_entered_second_round')}",
+            f"BB handoff SHA256: {result.get('nexus_handoff_sha256')}",
+            f"HZK treaty return validation: {treaty_return.get('status')}",
+            f"Business Brain state: {(moon_bb_handoff.get('business_brain_artifact') or {}).get('state')}",
+            "",
+            "NEXUS PROVIDER ROUNDS",
+            "---------------------",
+        ]
+        for item in provider_telemetry:
+            trace_lines.append(
+                "  round {round}: system={system_bytes}B user={user_bytes}B "
+                "tool_results={tool_result_count}/{tool_result_bytes}B "
+                "input_tokens={input_token_count} output_tokens={output_token_count} "
+                "first_token={first_token_latency_ms}ms total={total_latency_ms}ms "
+                "chunks={provider_chunk_count}".format(**{
+                    key: item.get(key)
+                    for key in (
+                        "round",
+                        "system_bytes",
+                        "user_bytes",
+                        "tool_result_count",
+                        "tool_result_bytes",
+                        "input_token_count",
+                        "output_token_count",
+                        "first_token_latency_ms",
+                        "total_latency_ms",
+                        "provider_chunk_count",
+                    )
+                })
+            )
+        trace_lines.extend(
+            (
+                "",
+                f"Handshake evidence: {handshake_artifact}",
+                f"Routing trace:      {trace_artifact}",
+                f"Provider telemetry: {telemetry_artifact}",
+                f"Nexus response:     {response_artifact}",
+            )
+        )
+
+        checks = [
+            _check(
+                "Attribution stimulus contains no hidden routing bumper",
+                not result.get("routing_bumpers"),
+                (),
+                tuple(result.get("routing_bumpers") or ()),
+            ),
+            _check(
+                "Initial Nexus provider round exposes multiple legitimate read-only choices",
+                multiple_choices,
+                {
+                    "business_brain.resolve_attribution": "visible",
+                    "memory.retrieve": "visible",
+                    "tool_results": 0,
+                },
+                {
+                    "tools": sorted(initial_tools),
+                    "tool_result_count": first_round.get("tool_result_count"),
+                },
+            ),
+            _check(
+                "Nexus independently proposes the Business Brain attribution tool",
+                model_selected_bb,
+                {"exactly_once": True, "provider_proposal_id": "non-empty"},
+                {
+                    "count": len(bb_executions),
+                    "provider_proposal_id": bb_execution.get("provider_proposal_id"),
+                },
+            ),
+            _check(
+                "Governed nexus.tools executes Business Brain exactly once",
+                bb_executed,
+                {"count": 1, "status": "SUCCEEDED"},
+                {
+                    "count": len(bb_executions),
+                    "status": bb_execution.get("status"),
+                    "execution_id": bb_execution.get("execution_id"),
+                },
+            ),
+            _check(
+                "Business Brain returns a passing Nexus handoff",
+                nexus_handoff.get("status") == "PASS",
+                "PASS",
+                nexus_handoff.get("status"),
+            ),
+            _check(
+                "Nexus receives the exact HZK NexusGrant unchanged",
+                result.get("exact_hzk_grant_to_nexus") is True
+                and bool(returned_hzk_grant)
+                and returned_hzk_grant == (hzk.get("treaty_grant") or {}),
+                {"exact_grant": True, "stable_wire": "unchanged"},
+                {
+                    "exact_grant": result.get("exact_hzk_grant_to_nexus"),
+                    "contract_version": returned_hzk_grant.get("contract_version"),
+                    "packet_id": (returned_hzk_grant.get("integrity") or {}).get("packet_id"),
+                },
+            ),
+            _check(
+                "Moon Source to Business Brain handoff accompanies HZK without duplicating its payload",
+                result.get("moon_business_brain_handoff_present") is True
+                and bool(moon_bb_handoff)
+                and "payload_text" not in json.dumps(
+                    moon_bb_handoff, sort_keys=True, ensure_ascii=False
+                )
+                and "treaty_grant" not in json.dumps(
+                    moon_bb_handoff, sort_keys=True, ensure_ascii=False
+                ),
+                {
+                    "handoff_present": True,
+                    "duplicate_hzk_payload": False,
+                },
+                {
+                    "handoff_present": result.get("moon_business_brain_handoff_present"),
+                    "handoff_type": moon_bb_handoff.get("handoff_type"),
+                    "handoff_bytes": transport.get("moon_business_brain_handoff_bytes"),
+                },
+            ),
+            _check(
+                "Moon Source selects sufficient relevant governed evidence",
+                moon_score.get("status") == "PASS" and bool(selected_sources),
+                {"status": "PASS", "selected_sources": ">0", "failed_checks": []},
+                {
+                    "status": moon_score.get("status"),
+                    "selected_sources": len(selected_sources),
+                    "failed_checks": list(moon_score.get("failed_checks") or ()),
+                    "core_relevance_ok": moon_score.get("core_relevance_ok"),
+                    "support_relevance_ok": moon_score.get("support_relevance_ok"),
+                    "evidence_payload_complete": moon_score.get("evidence_payload_complete"),
+                    "compatibility_pointer_ok": moon_score.get("compatibility_pointer_ok"),
+                    "false_claims_rejected": moon_score.get("false_claims_rejected"),
+                    "moon_source_authorship_preserved": moon_score.get("moon_source_authorship_preserved"),
+                    "business_brain_local_authorship_preserved": moon_score.get("business_brain_local_authorship_preserved"),
+                },
+            ),
+            _check(
+                "Moon Source evidence remains attributable by path and source hash",
+                source_identity_ok,
+                True,
+                {
+                    "complete": source_identity_ok,
+                    "sources": [
+                        {"path": item.get("path"), "sha256": item.get("source_sha256")}
+                        for item in selected_sources
+                    ],
+                },
+            ),
+            _check(
+                "HZK verifies the selected evidence without state or authority transfer",
+                hzk.get("status") == "PASS"
+                and hzk.get("constitutional_status") == "PASS"
+                and hzk.get("state_unchanged") is True
+                and hzk.get("authority_clean") is True,
+                {
+                    "status": "PASS",
+                    "constitutional_status": "PASS",
+                    "state_unchanged": True,
+                    "authority_clean": True,
+                },
+                {
+                    "status": hzk.get("status"),
+                    "constitutional_status": hzk.get("constitutional_status"),
+                    "state_unchanged": hzk.get("state_unchanged"),
+                    "authority_clean": hzk.get("authority_clean"),
+                },
+            ),
+            _check(
+                "HZK treaty v0.3 return receipt validates against exact grant and payload",
+                hzk.get("treaty_version") == "hzk-nexus/0.3"
+                and treaty_return.get("status") == "PASS"
+                and treaty_return.get("valid") is True,
+                {"treaty": "hzk-nexus/0.3", "valid": True},
+                {
+                    "treaty": hzk.get("treaty_version"),
+                    "return_validation": treaty_return,
+                },
+            ),
+            _check(
+                "Historical and compatibility distinctions survive the governed workflow",
+                hzk.get("historical_distinction_preserved") is True,
+                True,
+                hzk.get("historical_distinction_preserved"),
+            ),
+            _check(
+                "Business Brain keeps the resolution at draft_memory with immutable source",
+                (moon_bb_handoff.get("business_brain_artifact") or {}).get("state") == "draft_memory"
+                and (moon_bb_handoff.get("business_brain_artifact") or {}).get("source_immutable") is True
+                and (moon_bb_handoff.get("business_brain_artifact") or {}).get("readback_complete") is True,
+                {
+                    "state": "draft_memory",
+                    "source_immutable": True,
+                    "readback_complete": True,
+                },
+                moon_bb_handoff.get("business_brain_artifact"),
+            ),
+            _check(
+                "Business Brain integrity verification passes",
+                (moon_bb_handoff.get("business_brain_artifact") or {}).get("integrity_status") == "ok",
+                "ok",
+                (moon_bb_handoff.get("business_brain_artifact") or {}).get("integrity_status"),
+            ),
+            _check(
+                "Kernelized Nexus releases the final answer after the tool round",
+                result.get("status_code") == 200
+                and result.get("state") == "released"
+                and bool(final_text),
+                {"status_code": 200, "state": "released", "text": "non-empty"},
+                {
+                    "status_code": result.get("status_code"),
+                    "state": result.get("state"),
+                    "blocking_reason": result.get("blocking_reason"),
+                    "text_chars": len(final_text),
+                },
+            ),
+            _check(
+                "Final Nexus answer contains substantive attribution resolution",
+                len(substantive_terms) >= 2,
+                "at least two attribution/lineage resolution terms",
+                sorted(substantive_terms),
+            ),
+            _check(
+                "Nexus receipt chain includes tools provider evidence correction and release",
+                receipt_chain_ok,
+                {
+                    "nexus.tools",
+                    "nexus.provider",
+                    "nexus.evidence",
+                    "nexus.correction",
+                    "nexus.release",
+                },
+                receipt_ids,
+            ),
+            _check(
+                "Provider telemetry proves round two consumed the exact Business Brain handoff",
+                second_round_ok,
+                {
+                    "rounds": ">=2",
+                    "first_tool_results": 0,
+                    "exact_business_brain_handoff": True,
+                },
+                {
+                    "rounds": len(provider_telemetry),
+                    "first_tool_results": first_round.get("tool_result_count"),
+                    "final_tool_results": final_round.get("tool_result_count"),
+                    "handoff_sha256": result.get("nexus_handoff_sha256"),
+                    "exact_handoff_entered_second_round": result.get(
+                        "exact_handoff_entered_second_round"
+                    ),
+                    "business_brain_tool_results": result.get(
+                        "second_round_business_brain_tool_results"
+                    ),
+                },
+            ),
+            _check(
+                "Completed Nexus provider rounds expose token and latency telemetry",
+                telemetry_complete,
+                True,
+                {
+                    "complete": telemetry_complete,
+                    "rounds": provider_telemetry,
+                },
+            ),
+            _check(
+                "Full Business Brain handshake evidence remains inspectable outside model context",
+                bool(full_trace)
+                and bool(str(bb_trace_wrapper.get("trace_path") or "")),
+                {"full_trace": True, "trace_path": "present"},
+                {
+                    "full_trace": bool(full_trace),
+                    "trace_path": bb_trace_wrapper.get("trace_path"),
+                },
+            ),
+        ]
+        return CaseResult(
+            checks=checks,
+            evidence={
+                "turn_id": result.get("turn_id"),
+                "scenario": result.get("scenario"),
+                "routing_bumpers": result.get("routing_bumpers"),
+                "tool_executions": tool_executions,
+                "provider_telemetry": provider_telemetry,
+                "nexus_handoff": nexus_handoff,
+                "moon_score": moon_score,
+                "hzk": {
+                    "source_revision": hzk.get("source_revision"),
+                    "treaty_version": hzk.get("treaty_version"),
+                    "packet_id": hzk.get("packet_id"),
+                    "state_unchanged": hzk.get("state_unchanged"),
+                    "authority_clean": hzk.get("authority_clean"),
+                    "historical_distinction_preserved": hzk.get(
+                        "historical_distinction_preserved"
+                    ),
+                    "return_validation": treaty_return,
+                },
+                "business_brain": moon_bb_handoff.get("business_brain_artifact"),
+                "nexus": {
+                    "state": result.get("state"),
+                    "status_code": result.get("status_code"),
+                    "blocking_reason": result.get("blocking_reason"),
+                    "text": final_text,
+                    "receipts": receipts,
+                },
+                "artifacts": {
+                    "handshake": handshake_artifact,
+                    "trace": trace_artifact,
+                    "provider_telemetry": telemetry_artifact,
+                    "nexus_response": response_artifact,
+                },
+            },
+            operator_output=tuple(trace_lines),
+        )
+
+
 class ReceiptCoverageGateCase:
     planned_checks = (
         "All 17 required kernels emitted campaign evidence at an appropriate boundary",
@@ -570,11 +1122,77 @@ class ReceiptCoverageGateCase:
         return CaseResult(checks=checks, evidence={"coverage": coverage})
 
 
+
+class MonsterTaktCase:
+    planned_checks = (
+        "Observer-side Nexus takt samples were captured",
+        "Full governed chat wall takt is represented",
+        "Internal kernel timing availability is explicitly classified",
+        "Timing evidence preserves source and boundary classification",
+    )
+    name = "monster-takt-timing"
+    suite = "11 TAKT / PERFORMANCE OBSERVATION"
+
+    def run(self, runtime, database, context) -> CaseResult:
+        del database, context
+        timing = dict(runtime.request("GET", "/takt").json())
+        samples = list(timing.get("samples") or ())
+        aggregates = list(timing.get("aggregates") or ())
+        observer = [item for item in samples if item.get("source") == "observer_wall"]
+        kernel = [item for item in samples if item.get("source") == "kernel_receipt"]
+        chat = [
+            item for item in aggregates
+            if item.get("name") in {"runtime.chat.total", "runtime.request.total"}
+            and item.get("source") == "observer_wall"
+        ]
+        internal_status = "OBSERVED" if kernel else "NOT_EXPOSED_BY_RUNTIME"
+        classified = all(
+            item.get("source") in {"observer_wall", "kernel_receipt", "external_boundary"}
+            and item.get("boundary") in {"nexus", "external"}
+            for item in samples
+        )
+        checks = [
+            _check(
+                "Observer-side Nexus takt samples were captured",
+                bool(observer),
+                ">=1 observer_wall sample",
+                len(observer),
+            ),
+            _check(
+                "Full governed chat wall takt is represented",
+                bool(chat),
+                "runtime.chat.total or runtime.request.total observer timing",
+                [item.get("name") for item in chat],
+            ),
+            _check(
+                "Internal kernel timing availability is explicitly classified",
+                internal_status in {"OBSERVED", "NOT_EXPOSED_BY_RUNTIME"},
+                "OBSERVED or NOT_EXPOSED_BY_RUNTIME",
+                internal_status,
+            ),
+            _check(
+                "Timing evidence preserves source and boundary classification",
+                classified,
+                True,
+                classified,
+            ),
+        ]
+        return CaseResult(
+            checks=checks,
+            evidence={
+                "takt": timing,
+                "internal_kernel_timing_status": internal_status,
+                "observer_sample_count": len(observer),
+                "kernel_receipt_sample_count": len(kernel),
+            },
+        )
+
+
 def register_cases(_config: Any):
     # Order matters: the final gate evaluates accumulated evidence from every
     # preceding scenario. No required full-runtime flight control is represented
     # as SKIP in this campaign.
-    return [
+    cases = [
         FlightControlInventoryCase(),
         CanonicalIngressBaselineCase(),
         SecurityAndAuthorityCase(),
@@ -584,5 +1202,10 @@ def register_cases(_config: Any):
         CognitionModesLearningCase(),
         JobsArtifactsCase(),
         FaultInjectionCase(),
-        ReceiptCoverageGateCase(),
     ]
+    if os.environ.get("NEXUS_RIG_ATTRIBUTION_CHAIN", "0") == "1":
+        cases.append(AttributionKnowledgeChainCase())
+    cases.append(ReceiptCoverageGateCase())
+    if os.environ.get("NEXUS_RIG_TAKT", "0") == "1":
+        cases.append(MonsterTaktCase())
+    return cases

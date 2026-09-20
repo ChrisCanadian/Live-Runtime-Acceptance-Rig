@@ -11,14 +11,59 @@ can distinguish canonical-turn participation from bounded manager exercise.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import sqlite3
+import sys
+import time
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from fastapi import Request
 
 from live_runtime_rig.config import RigConfig
+from live_runtime_rig_nexus_monster.takt import TaktRecorder, timed_method
+
+
+def _safe_json_value(value: Any) -> Any:
+    if is_dataclass(value):
+        return {key: _safe_json_value(item) for key, item in asdict(value).items()}
+    if isinstance(value, Mapping):
+        return {str(key): _safe_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_safe_json_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _safe_json_bytes(value: Any) -> int:
+    return len(
+        json.dumps(
+            _safe_json_value(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    )
+
+
+def _safe_json_sha256(value: Any) -> str:
+    payload = json.dumps(
+        _safe_json_value(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _operator_line(message: str) -> None:
+    stream = getattr(sys, "__stdout__", None) or sys.stdout
+    stream.write(message.rstrip() + "\n")
+    stream.flush()
 
 
 def _configure_operator_console_noise() -> None:
@@ -114,6 +159,7 @@ class _InProcessASGIClient:
         ) as client:
             return await client.request(method, path, **kwargs)
 
+    @timed_method("runtime.request.total")
     def request(self, method: str, path: str, **kwargs: Any):
         if self._closed:
             raise RuntimeError("monster ASGI client is closed")
@@ -144,6 +190,7 @@ class KernelizedMonsterRuntimeAdapter:
             if not raw_v5_checkout or raw_v5_checkout.upper() == "STAGED"
             else Path(raw_v5_checkout).resolve()
         )
+        self.v5_expected_sha = os.environ.get("NEXUS_RIG_V5_EXPECTED_SHA", "").strip() or None
         self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
         self.artifact_path = Path(
             os.environ.get("NEXUS_RIG_ARTIFACT_PATH", str(config.evidence_dir / "nexus-artifacts"))
@@ -181,6 +228,160 @@ class KernelizedMonsterRuntimeAdapter:
         self._provider_probe: dict[str, Any] = {}
         self._rag_probe: dict[str, Any] = {}
         self._analysis_probe: dict[str, Any] = {}
+        self._provider_telemetry: list[dict[str, Any]] = []
+        self._provider_round_counts: dict[str, int] = {}
+        self._business_brain_tool: Any | None = None
+        self._takt = TaktRecorder()
+
+    def _provider_runtime_controls(self, request: Any, context: Any) -> Mapping[str, Any]:
+        """Attach acceptance-only streaming observation to the V5 provider request.
+
+        These callbacks never enter Nexus's public ProviderRequest or receipt
+        hashing. They are host-side observation/cancellation controls only.
+        """
+
+        turn_id = str(getattr(context, "turn_id", "") or "")
+        round_number = self._provider_round_counts.get(turn_id, 0) + 1
+        self._provider_round_counts[turn_id] = round_number
+        attribution_turn = turn_id.startswith("monster-attribution-route:")
+        started = time.monotonic()
+        deadline_seconds = float(
+            os.environ.get("NEXUS_RIG_PROVIDER_DEADLINE_SECONDS", "300")
+        )
+        available_tools = tuple(
+            str(getattr(item, "tool_id", "") or "")
+            for item in (getattr(request, "available_tools", ()) or ())
+            if str(getattr(item, "tool_id", "") or "")
+        )
+        tool_results = tuple(getattr(request, "tool_results", ()) or ())
+        tool_result_observations = []
+        for item in tool_results:
+            output = getattr(item, "output", {})
+            tool_result_observations.append(
+                {
+                    "proposal_id": getattr(item, "proposal_id", None),
+                    "execution_id": getattr(item, "execution_id", None),
+                    "tool_id": getattr(item, "tool_id", None),
+                    "status": getattr(item, "status", None),
+                    "output_bytes": _safe_json_bytes(output),
+                    "output_sha256": _safe_json_sha256(output),
+                }
+            )
+
+        record: dict[str, Any] = {
+            "turn_id": turn_id,
+            "round": round_number,
+            "system_bytes": len(
+                str(getattr(request, "system_prompt", "") or "").encode("utf-8")
+            ),
+            "user_bytes": len(
+                str(getattr(request, "user_prompt", "") or "").encode("utf-8")
+            ),
+            "available_tools": available_tools,
+            "available_tool_count": len(available_tools),
+            "tool_schema_bytes": _safe_json_bytes(
+                tuple(getattr(request, "available_tools", ()) or ())
+            ),
+            "tool_result_count": len(tool_results),
+            "tool_result_bytes": _safe_json_bytes(tool_results),
+            "tool_results": tool_result_observations,
+            "started_monotonic": started,
+            "deadline_seconds": deadline_seconds,
+            "stream_chunks_observed": 0,
+            "stream_bytes_observed": 0,
+        }
+        self._provider_telemetry.append(record)
+
+        if attribution_turn:
+            _operator_line(
+                f"[NEXUS] provider round {round_number} START | "
+                f"system={record['system_bytes']}B "
+                f"user={record['user_bytes']}B "
+                f"tools={len(available_tools)}/{record['tool_schema_bytes']}B "
+                f"tool_results={len(tool_results)} "
+                f"tool_result_bytes={record['tool_result_bytes']}B"
+            )
+            if available_tools:
+                _operator_line(
+                    "[NEXUS] visible read-only tools | " + ", ".join(available_tools)
+                )
+
+        last_reported_chunk = 0
+
+        def stream_observer(delta: Any) -> None:
+            nonlocal last_reported_chunk
+            sequence = int(getattr(delta, "sequence", 0) or 0)
+            cumulative = int(getattr(delta, "cumulative_utf8_bytes", 0) or 0)
+            elapsed_ms = int(getattr(delta, "elapsed_ms", 0) or 0)
+            record["stream_chunks_observed"] = sequence
+            record["stream_bytes_observed"] = cumulative
+            record["last_stream_elapsed_ms"] = elapsed_ms
+            record["last_stream_sha256"] = getattr(delta, "cumulative_sha256", None)
+            if attribution_turn and (
+                sequence == 1
+                or sequence - last_reported_chunk >= 25
+                or elapsed_ms >= (record.get("last_reported_elapsed_ms", 0) + 15_000)
+            ):
+                if sequence == 1:
+                    record["observed_first_chunk_ms"] = elapsed_ms
+                last_reported_chunk = sequence
+                record["last_reported_elapsed_ms"] = elapsed_ms
+                _operator_line(
+                    f"[NEXUS] provider round {round_number} STREAM | "
+                    f"chunks={sequence} output={cumulative}B "
+                    f"elapsed={elapsed_ms / 1000:.1f}s"
+                )
+
+        def cancellation_check() -> bool:
+            expired = (time.monotonic() - started) >= deadline_seconds
+            if expired and not record.get("cancellation_reported"):
+                record["cancellation_reported"] = True
+                if attribution_turn:
+                    _operator_line(
+                        f"[NEXUS] provider round {round_number} CANCEL | "
+                        f"deadline={deadline_seconds:.0f}s"
+                    )
+            return expired
+
+        def result_observer(response: Any, failures: tuple[str, ...]) -> None:
+            record.update(
+                {
+                    "provider_id": getattr(response, "provider_id", None),
+                    "model_id": getattr(response, "model_id", None),
+                    "input_token_count": getattr(response, "input_token_count", None),
+                    "output_token_count": getattr(response, "output_token_count", None),
+                    "first_token_latency_ms": getattr(response, "first_token_latency_ms", None),
+                    "total_latency_ms": getattr(response, "total_latency_ms", None),
+                    "provider_chunk_count": int(
+                        getattr(response, "provider_chunk_count", 0) or 0
+                    ),
+                    "provider_stream_sha256": getattr(
+                        response, "provider_stream_sha256", None
+                    ),
+                    "route_id": getattr(response, "route_id", None),
+                    "route_failures": tuple(failures),
+                    "response_bytes": len(
+                        str(getattr(response, "text", "") or "").encode("utf-8")
+                    ),
+                    "completed": True,
+                }
+            )
+            if attribution_turn:
+                _operator_line(
+                    f"[NEXUS] provider round {round_number} COMPLETE | "
+                    f"input_tokens={record['input_token_count']} "
+                    f"output_tokens={record['output_token_count']} "
+                    f"first_token={record['first_token_latency_ms']}ms "
+                    f"provider={record['total_latency_ms']}ms "
+                    f"chunks={record['provider_chunk_count']} "
+                    f"response={record['response_bytes']}B"
+                )
+
+        return {
+            "stream_observer": stream_observer,
+            "cancellation_check": cancellation_check,
+            "result_observer": result_observer,
+        }
 
     def _configure_v5_environment(self) -> None:
         self.artifact_path.mkdir(parents=True, exist_ok=True)
@@ -410,6 +611,7 @@ class KernelizedMonsterRuntimeAdapter:
         }
 
     def start(self) -> None:
+        start_total_started = time.perf_counter_ns()
         if self._assembled is not None:
             raise RuntimeError("monster runtime adapter already started")
         if not self.production_checkout.is_dir():
@@ -437,16 +639,37 @@ class KernelizedMonsterRuntimeAdapter:
         # The monster lane owns disposable state, so all runtime write paths are
         # enabled. Source databases remain untouched because the launcher mounts
         # only isolated copies into /run/state.
+        bootstrap_started = time.perf_counter_ns()
         assembled = build_kernelized_test_runtime(
             KernelizedTestRuntimeConfig(
                 production_checkout=self.production_checkout,
                 legacy_state_db_path=self.legacy_db,
                 v5_checkout=self.v5_checkout,
+                v5_expected_sha=self.v5_expected_sha,
+                provider_runtime_controls_factory=self._provider_runtime_controls,
+                tool_deadline_ms=int(os.environ.get("NEXUS_RIG_TOOL_DEADLINE_MS", "300000")),
                 allow_mode_lifecycle_writes=True,
                 allow_legacy_memory_writes=True,
                 allow_canonical_memory_writes=True,
             )
         )
+        self._takt.record(
+            "runtime.bootstrap.build_kernelized_test_runtime",
+            (time.perf_counter_ns() - bootstrap_started) / 1_000_000,
+            boundary="nexus",
+        )
+        if os.environ.get("NEXUS_RIG_ATTRIBUTION_CHAIN", "").strip() == "1":
+            from live_runtime_rig_nexus_monster.business_brain_tool import (
+                register_business_brain_tool,
+            )
+
+            moon_root = Path(os.environ["NEXUS_RIG_MOON_SOURCE_DIR"]).resolve()
+            self._business_brain_tool = register_business_brain_tool(
+                assembled,
+                moon_root=moon_root,
+                artifact_dir=self.artifact_path,
+            )
+
         service = CanonicalRuntimeIngress(assembled.host.turn_runner)
 
         async def require_principal(request: Request):
@@ -473,15 +696,49 @@ class KernelizedMonsterRuntimeAdapter:
                 "REAL_PROVIDER_REQUIRED: assembled runtime resolved a fake provider"
             )
 
+        provider_started = time.perf_counter_ns()
         self._provider_probe = self._run_real_provider_probe(assembled)
+        self._takt.record(
+            "runtime.preflight.provider",
+            (time.perf_counter_ns() - provider_started) / 1_000_000,
+            boundary="nexus",
+        )
+        analysis_started = time.perf_counter_ns()
         self._analysis_probe = self._run_production_analysis_probe(assembled)
+        self._takt.record(
+            "runtime.preflight.analysis",
+            (time.perf_counter_ns() - analysis_started) / 1_000_000,
+            boundary="nexus",
+        )
+        rag_started = time.perf_counter_ns()
         self._rag_probe = self._run_production_rag_probe()
+        self._takt.record(
+            "runtime.preflight.rag",
+            (time.perf_counter_ns() - rag_started) / 1_000_000,
+            boundary="nexus",
+        )
 
         self._assembled = assembled
         self._app = app
         self._client = _InProcessASGIClient(app)
+        self._takt.record(
+            "runtime.start.total",
+            (time.perf_counter_ns() - start_total_started) / 1_000_000,
+            boundary="nexus",
+        )
 
     def close(self) -> None:
+        self._takt.write(self.artifact_path)
+        self.artifact_path.mkdir(parents=True, exist_ok=True)
+        (self.artifact_path / "provider-telemetry.json").write_text(
+            json.dumps(
+                [_safe_json_value(item) for item in self._provider_telemetry],
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         client = self._client
         if client is not None:
             close = getattr(client, "close", None)
@@ -493,7 +750,9 @@ class KernelizedMonsterRuntimeAdapter:
         self._provider_probe = {}
         self._rag_probe = {}
         self._analysis_probe = {}
+        self._business_brain_tool = None
 
+    @timed_method("runtime.restart.total")
     def restart(self) -> None:
         self.close()
         self.start()
@@ -524,9 +783,45 @@ class KernelizedMonsterRuntimeAdapter:
         sources = self._coverage_sources[kernel_id]
         sources[source] = sources.get(source, 0) + 1
 
+    def _record_receipt_takt(
+        self,
+        receipt: Any,
+        *,
+        label: str | None = None,
+        source: str = "kernel_receipt",
+    ) -> None:
+        if isinstance(receipt, Mapping):
+            kernel_id = str(receipt.get("kernel_id") or "")
+            operation = str(receipt.get("operation") or "")
+            duration = receipt.get("duration_ms")
+            status = receipt.get("status")
+        else:
+            kernel_id = str(getattr(receipt, "kernel_id", "") or "")
+            operation = str(getattr(receipt, "operation", "") or "")
+            duration = getattr(receipt, "duration_ms", None)
+            raw_status = getattr(receipt, "status", None)
+            status = getattr(raw_status, "value", None) or str(raw_status or "")
+        if not isinstance(duration, (int, float)):
+            return
+        name = label or ".".join(value for value in (kernel_id, operation) if value)
+        if not name:
+            name = "kernel.receipt"
+        self._takt.record(
+            name,
+            float(duration),
+            source=source,
+            boundary="nexus",
+            metadata={
+                "kernel_id": kernel_id,
+                "operation": operation,
+                "status": status,
+            },
+        )
+
     def _observe_payload(self, payload: Mapping[str, Any]) -> None:
         receipts = self._public_receipts(payload)
         for receipt in receipts:
+            self._record_receipt_takt(receipt)
             self._record_coverage(
                 kernel_id=str(receipt.get("kernel_id") or ""),
                 operation=str(receipt.get("operation") or ""),
@@ -553,6 +848,10 @@ class KernelizedMonsterRuntimeAdapter:
         operation = str(getattr(receipt, "operation", "") or "")
         status = getattr(getattr(receipt, "status", None), "value", None) or str(
             getattr(receipt, "status", "")
+        )
+        self._record_receipt_takt(
+            receipt,
+            label=f"{kernel_id}.{operation}.boundary",
         )
         self._record_coverage(
             kernel_id=kernel_id,
@@ -585,6 +884,7 @@ class KernelizedMonsterRuntimeAdapter:
             },
         )
 
+    @timed_method("runtime.seed_tool_loop_memory")
     def seed_tool_loop_memory(
         self,
         *,
@@ -658,6 +958,7 @@ class KernelizedMonsterRuntimeAdapter:
             "idempotent_replay": bool(value.get("idempotent_replay")),
             "seeded": result.receipt.status is KernelStatus.OK and bool(value.get("source_id")),
         }
+    @timed_method("runtime.exercise_kernel_boundary")
     def exercise_kernel_boundary(self, kernel_id: str, *, marker: str) -> Mapping[str, Any]:
         """Exercise a registered public manager at its owning responsibility.
 
@@ -865,6 +1166,7 @@ class KernelizedMonsterRuntimeAdapter:
 
         raise ValueError(f"unsupported Monster boundary probe kernel: {kernel_id}")
 
+    @timed_method("runtime.exercise_fault_boundary")
     def exercise_fault_boundary(self, fault: str, *, marker: str) -> Mapping[str, Any]:
         """Commission bounded failure controls through real public managers.
 
@@ -1005,6 +1307,150 @@ class KernelizedMonsterRuntimeAdapter:
 
         raise ValueError(f"unsupported Monster fault boundary: {fault}")
 
+    def provider_chat_json(
+        self,
+        system: str,
+        user: str,
+        *,
+        label: str = "provider.attribution_selection",
+    ) -> tuple[dict[str, Any], str]:
+        """Use the registered Provider manager without creating a full user turn."""
+
+        from nexus_ndka.kernels.provider.contracts import (
+            InferenceRole,
+            ProviderOperation,
+            ProviderRequest,
+        )
+        from nexus_ndka.runtime.contracts import KernelStatus, RuntimeContext
+
+        assembled, _ = self._require_started()
+        manager = assembled.host.registry.get("nexus.provider")
+        context = RuntimeContext(
+            request_id=f"monster-provider-callback:{label}",
+            turn_id=f"monster-provider-callback:{label}",
+            actor_id=str(self.primary_user_id),
+            scope_id=str(self.primary_user_id),
+            session_id=f"monster-provider-callback:{label}",
+            metadata={
+                "acceptance_provider_callback": True,
+                "owner_key": self.primary_owner_key,
+            },
+        )
+        started = time.perf_counter_ns()
+        result = asyncio.run(
+            manager.execute(
+                ProviderRequest(
+                    operation=ProviderOperation.GENERATE,
+                    system_prompt=system,
+                    user_prompt=user,
+                    role=InferenceRole.PRIMARY_RESPONSE,
+                    required_capabilities=frozenset({"TEXT"}),
+                    available_tools=(),
+                ),
+                context,
+            )
+        )
+        wall_ms = (time.perf_counter_ns() - started) / 1_000_000
+        self._takt.record(
+            label,
+            wall_ms,
+            source="observer_wall",
+            boundary="nexus",
+            metadata={"kernel_id": "nexus.provider"},
+        )
+        self._observe_boundary_result(result, label=label)
+        if result.receipt.status is not KernelStatus.OK:
+            raise RuntimeError(
+                f"{label} failed: "
+                + str(result.envelope.diagnostics or result.receipt.details)
+            )
+        content = str(result.envelope.text or "")
+        if not content.strip():
+            raise RuntimeError(f"{label} returned empty provider text")
+        raw = {
+            "id": f"kernelized-monster:{label}",
+            "model": result.envelope.model_id,
+            "provider": result.envelope.provider_id,
+            "usage": None,
+            "receipt_status": result.receipt.status.value,
+            "kernel_duration_ms": getattr(result.receipt, "duration_ms", None),
+        }
+        return raw, content
+
+    def provider_telemetry_for_turn(self, turn_id: str) -> tuple[Mapping[str, Any], ...]:
+        return tuple(
+            dict(item) for item in self._provider_telemetry
+            if str(item.get("turn_id") or "") == turn_id
+        )
+
+    def business_brain_trace_for_turn(self, turn_id: str) -> Mapping[str, Any] | None:
+        handler = self._business_brain_tool
+        if handler is None:
+            return None
+        return handler.trace_for_turn(turn_id)
+
+    def tool_execution_trace(self, turn_id: str) -> tuple[Mapping[str, Any], ...]:
+        assembled, _ = self._require_started()
+        rows: list[dict[str, Any]] = []
+        with assembled.v5_runtime.database.read() as connection:
+            values = connection.execute(
+                """SELECT execution_id, turn_id, tool_id, tool_version, status,
+                          attempt_count, result_json, error_code,
+                          execution_receipt_id, provider_proposal_id,
+                          started_at, completed_at
+                   FROM tool_executions
+                   WHERE turn_id = ?
+                   ORDER BY started_at, execution_id""",
+                (turn_id,),
+            ).fetchall()
+        for row in values:
+            item = dict(row)
+            raw_result = item.pop("result_json", None)
+            try:
+                parsed_result = json.loads(raw_result) if raw_result else None
+            except Exception:
+                parsed_result = None
+            item["result"] = parsed_result
+            item["result_bytes"] = (
+                len(str(raw_result).encode("utf-8")) if raw_result is not None else 0
+            )
+            rows.append(item)
+        return tuple(rows)
+
+    def record_nexus_takt(
+        self,
+        name: str,
+        duration_ms: float,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._takt.record(
+            name,
+            duration_ms,
+            source="observer_wall",
+            boundary="nexus",
+            metadata=metadata,
+        )
+
+    def record_external_takt(
+        self,
+        name: str,
+        duration_ms: float,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._takt.record(
+            name,
+            duration_ms,
+            source="external_boundary",
+            boundary="external",
+            metadata=metadata,
+        )
+
+    def takt(self) -> Mapping[str, Any]:
+        return self._takt.snapshot()
+
+    @timed_method("runtime.chat.total")
     def chat(
         self,
         text: str,
@@ -1034,6 +1480,7 @@ class KernelizedMonsterRuntimeAdapter:
             self._observe_payload(payload)
         return response
 
+    @timed_method("runtime.health.total")
     def health(self) -> Mapping[str, Any]:
         assembled, _ = self._require_started()
         readiness = asyncio.run(assembled.host.test_readiness())
@@ -1064,6 +1511,7 @@ class KernelizedMonsterRuntimeAdapter:
     def direct_readiness_probe(self) -> Mapping[str, Any]:
         return dict(self.health())
 
+    @timed_method("runtime.coverage.total")
     def coverage(self) -> Mapping[str, Any]:
         missing = tuple(kernel_id for kernel_id in REQUIRED_KERNEL_IDS if self._coverage[kernel_id] == 0)
         return {
@@ -1126,6 +1574,8 @@ class KernelizedMonsterRuntimeAdapter:
             return _MappingResponse(200, _inventory_payload(inventory))
         if normalized == "GET" and path == "/coverage":
             return _MappingResponse(200, dict(self.coverage()))
+        if normalized == "GET" and path == "/takt":
+            return _MappingResponse(200, dict(self.takt()))
         if normalized == "POST" and path == "/__rig/restart":
             self.restart()
             return _MappingResponse(200, {"restarted": True})
@@ -1156,6 +1606,8 @@ class KernelizedMonsterRuntimeAdapter:
             "cross-user-isolation",
             "negative-security-path",
             "all-required-flight-controls",
+            "observer-takt-timing",
+            "kernel-receipt-duration-observation",
         )
 
 

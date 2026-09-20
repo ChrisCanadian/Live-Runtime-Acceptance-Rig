@@ -85,7 +85,9 @@ PY
 RUN git config --system --add safe.directory /production \
     && git config --system --add safe.directory /v5 \
     && git config --system --add safe.directory /ndka \
-    && git config --system --add safe.directory /rig
+    && git config --system --add safe.directory /rig \
+    && git config --system --add safe.directory /business-brain \
+    && git config --system --add safe.directory /moon-source
 
 WORKDIR /rig
 
