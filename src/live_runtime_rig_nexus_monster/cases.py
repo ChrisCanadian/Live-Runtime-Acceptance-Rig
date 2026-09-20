@@ -547,8 +547,9 @@ class AttributionKnowledgeChainCase:
         "Initial Nexus provider round exposes multiple legitimate read-only choices",
         "Nexus independently proposes the Business Brain attribution tool",
         "Governed nexus.tools executes Business Brain exactly once",
-        "Business Brain returns a passing bounded resolution",
-        "Business Brain result excludes raw HZK treaty payload from model context",
+        "Business Brain returns a passing Nexus handoff",
+        "Nexus receives the exact HZK NexusGrant unchanged",
+        "Moon Source to Business Brain handoff accompanies HZK without duplicating its payload",
         "Moon Source selects sufficient relevant governed evidence",
         "Moon Source evidence remains attributable by path and source hash",
         "HZK verifies the selected evidence without state or authority transfer",
@@ -581,7 +582,17 @@ class AttributionKnowledgeChainCase:
             item for item in (result.get("business_brain_executions") or [])
             if isinstance(item, Mapping)
         ]
-        bounded = dict(result.get("bounded_result") or {})
+        nexus_handoff = dict(result.get("nexus_handoff") or {})
+        moon_bb_handoff = (
+            dict(nexus_handoff.get("moon_business_brain_handoff") or {})
+            if isinstance(nexus_handoff.get("moon_business_brain_handoff"), Mapping)
+            else {}
+        )
+        returned_hzk_grant = (
+            dict(nexus_handoff.get("hzk_grant") or {})
+            if isinstance(nexus_handoff.get("hzk_grant"), Mapping)
+            else {}
+        )
         bb_trace_wrapper = result.get("business_brain_trace")
         bb_trace_wrapper = (
             dict(bb_trace_wrapper)
@@ -598,7 +609,8 @@ class AttributionKnowledgeChainCase:
         moon_score = dict(moon.get("score") or {})
         hzk = dict(full_trace.get("hzk") or {})
         bb = dict(full_trace.get("business_brain") or {})
-        treaty_return = dict(full_trace.get("nexus_return_validation") or {})
+        treaty_return = dict(result.get("hzk_return_validation") or {})
+        nexus_return_receipt = dict(result.get("nexus_return_receipt") or {})
         provider_telemetry = [
             item for item in (result.get("provider_telemetry") or [])
             if isinstance(item, Mapping)
@@ -609,7 +621,7 @@ class AttributionKnowledgeChainCase:
         ]
 
         selected_sources = [
-            item for item in (bounded.get("sources") or [])
+            item for item in (moon_bb_handoff.get("selected_sources") or [])
             if isinstance(item, Mapping)
         ]
         source_identity_ok = bool(selected_sources) and all(
@@ -691,7 +703,9 @@ class AttributionKnowledgeChainCase:
                 "tool_executions": tool_executions,
                 "provider_telemetry": provider_telemetry,
                 "receipts": receipts,
-                "bounded_result": bounded,
+                "nexus_handoff": nexus_handoff,
+                "nexus_return_receipt": nexus_return_receipt,
+                "hzk_return_validation": treaty_return,
                 "business_brain_trace_path": bb_trace_wrapper.get("trace_path"),
             },
         )
@@ -708,7 +722,7 @@ class AttributionKnowledgeChainCase:
             + "\n```\n",
         )
 
-        transport = dict(bounded.get("transport") or {})
+        transport = dict(nexus_handoff.get("transport") or {})
         trace_lines = [
             "NEXUS ACTUAL RESPONSE",
             "---------------------",
@@ -728,10 +742,12 @@ class AttributionKnowledgeChainCase:
             f"Selected Moon sources: {len(selected_sources)}",
             f"Raw HZK payload: {transport.get('hzk_payload_bytes')} bytes",
             f"HZK treaty wire: {transport.get('hzk_grant_wire_bytes')} bytes",
-            f"Bounded result returned to Nexus: {transport.get('bounded_result_bytes')} bytes",
-            f"Raw treaty leaked to model result: {result.get('bounded_result_leaks_raw_hzk')}",
+            f"Exact HZK grant delivered to Nexus: {result.get('exact_hzk_grant_to_nexus')}",
+            f"HZK treaty wire delivered: {transport.get('hzk_grant_wire_bytes')} bytes",
+            f"Moon -> Business Brain handoff: {transport.get('moon_business_brain_handoff_bytes')} bytes",
+            f"Total Nexus tool result: {transport.get('nexus_tool_result_bytes')} bytes",
             f"HZK treaty return validation: {treaty_return.get('status')}",
-            f"Business Brain state: {(bounded.get('business_brain') or {}).get('state')}",
+            f"Business Brain state: {(moon_bb_handoff.get('business_brain_artifact') or {}).get('state')}",
             "",
             "NEXUS PROVIDER ROUNDS",
             "---------------------",
@@ -808,19 +824,41 @@ class AttributionKnowledgeChainCase:
                 },
             ),
             _check(
-                "Business Brain returns a passing bounded resolution",
-                bounded.get("status") == "PASS",
+                "Business Brain returns a passing Nexus handoff",
+                nexus_handoff.get("status") == "PASS",
                 "PASS",
-                bounded.get("status"),
+                nexus_handoff.get("status"),
             ),
             _check(
-                "Business Brain result excludes raw HZK treaty payload from model context",
-                result.get("bounded_result_leaks_raw_hzk") is False
-                and int(result.get("bounded_result_bytes") or 0) <= 80_000,
-                {"raw_hzk_payload": False, "max_bytes": 80000},
+                "Nexus receives the exact HZK NexusGrant unchanged",
+                result.get("exact_hzk_grant_to_nexus") is True
+                and bool(returned_hzk_grant)
+                and returned_hzk_grant == (hzk.get("treaty_grant") or {}),
+                {"exact_grant": True, "stable_wire": "unchanged"},
                 {
-                    "raw_hzk_payload": result.get("bounded_result_leaks_raw_hzk"),
-                    "bytes": result.get("bounded_result_bytes"),
+                    "exact_grant": result.get("exact_hzk_grant_to_nexus"),
+                    "contract_version": returned_hzk_grant.get("contract_version"),
+                    "packet_id": (returned_hzk_grant.get("integrity") or {}).get("packet_id"),
+                },
+            ),
+            _check(
+                "Moon Source to Business Brain handoff accompanies HZK without duplicating its payload",
+                result.get("moon_business_brain_handoff_present") is True
+                and bool(moon_bb_handoff)
+                and "payload_text" not in json.dumps(
+                    moon_bb_handoff, sort_keys=True, ensure_ascii=False
+                )
+                and "treaty_grant" not in json.dumps(
+                    moon_bb_handoff, sort_keys=True, ensure_ascii=False
+                ),
+                {
+                    "handoff_present": True,
+                    "duplicate_hzk_payload": False,
+                },
+                {
+                    "handoff_present": result.get("moon_business_brain_handoff_present"),
+                    "handoff_type": moon_bb_handoff.get("handoff_type"),
+                    "handoff_bytes": transport.get("moon_business_brain_handoff_bytes"),
                 },
             ),
             _check(
@@ -882,21 +920,21 @@ class AttributionKnowledgeChainCase:
             ),
             _check(
                 "Business Brain keeps the resolution at draft_memory with immutable source",
-                (bounded.get("business_brain") or {}).get("state") == "draft_memory"
-                and (bounded.get("business_brain") or {}).get("source_immutable") is True
-                and (bounded.get("business_brain") or {}).get("readback_complete") is True,
+                (moon_bb_handoff.get("business_brain_artifact") or {}).get("state") == "draft_memory"
+                and (moon_bb_handoff.get("business_brain_artifact") or {}).get("source_immutable") is True
+                and (moon_bb_handoff.get("business_brain_artifact") or {}).get("readback_complete") is True,
                 {
                     "state": "draft_memory",
                     "source_immutable": True,
                     "readback_complete": True,
                 },
-                bounded.get("business_brain"),
+                moon_bb_handoff.get("business_brain_artifact"),
             ),
             _check(
                 "Business Brain integrity verification passes",
-                (bounded.get("business_brain") or {}).get("integrity_status") == "ok",
+                (moon_bb_handoff.get("business_brain_artifact") or {}).get("integrity_status") == "ok",
                 "ok",
-                (bounded.get("business_brain") or {}).get("integrity_status"),
+                (moon_bb_handoff.get("business_brain_artifact") or {}).get("integrity_status"),
             ),
             _check(
                 "Kernelized Nexus releases the final answer after the tool round",
@@ -967,7 +1005,7 @@ class AttributionKnowledgeChainCase:
                 "routing_bumpers": result.get("routing_bumpers"),
                 "tool_executions": tool_executions,
                 "provider_telemetry": provider_telemetry,
-                "bounded_result": bounded,
+                "nexus_handoff": nexus_handoff,
                 "moon_score": moon_score,
                 "hzk": {
                     "source_revision": hzk.get("source_revision"),
@@ -980,7 +1018,7 @@ class AttributionKnowledgeChainCase:
                     ),
                     "return_validation": treaty_return,
                 },
-                "business_brain": bounded.get("business_brain"),
+                "business_brain": moon_bb_handoff.get("business_brain_artifact"),
                 "nexus": {
                     "state": result.get("state"),
                     "status_code": result.get("status_code"),
