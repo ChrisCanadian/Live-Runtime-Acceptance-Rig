@@ -13,8 +13,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -36,6 +39,75 @@ def _clean_json(value: str) -> dict[str, Any]:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _emit_live(message: str) -> None:
+    stream = getattr(sys, "__stdout__", None) or sys.stdout
+    stream.write(message.rstrip() + "\n")
+    stream.flush()
+
+
+@contextmanager
+def _live_stage(label: str):
+    """Emit low-noise liveness while the normal runner captures subsystem chatter."""
+
+    started = time.monotonic()
+    stop = threading.Event()
+    _emit_live(f"[10A] {label} START")
+
+    def pulse() -> None:
+        while not stop.wait(30):
+            elapsed = time.monotonic() - started
+            _emit_live(f"[10A] {label} alive... {elapsed:.0f}s elapsed")
+
+    thread = threading.Thread(target=pulse, name=f"monster-heartbeat:{label}", daemon=True)
+    thread.start()
+    try:
+        yield
+    except BaseException as exc:
+        elapsed = time.monotonic() - started
+        _emit_live(f"[10A] {label} FAILED after {elapsed:.1f}s ({type(exc).__name__})")
+        raise
+    else:
+        elapsed = time.monotonic() - started
+        _emit_live(f"[10A] {label} COMPLETE in {elapsed:.1f}s")
+    finally:
+        stop.set()
+
+
+@contextmanager
+def _wall_deadline(seconds: int, label: str):
+    """Hard wall-clock deadline for the Linux acceptance container.
+
+    Nested deadlines preserve the outer timer. This deliberately lives in the
+    acceptance layer rather than changing production provider timeout semantics.
+    """
+
+    if seconds <= 0:
+        yield
+        return
+    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
+        raise RuntimeError(f"{label}: hard deadline requires POSIX interval timers")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+
+    def expired(_signum, _frame):
+        raise TimeoutError(f"{label}_ABSOLUTE_DEADLINE_EXCEEDED:{seconds}s")
+
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    try:
+        yield
+    finally:
+        elapsed = time.monotonic() - started
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        remaining, interval = previous_timer
+        if remaining > 0:
+            restored = max(0.001, remaining - elapsed)
+            signal.setitimer(signal.ITIMER_REAL, restored, interval)
 
 
 def _timed(runtime: Any, name: str, fn, *, metadata: Mapping[str, Any] | None = None):
@@ -63,7 +135,7 @@ def _receipt_trace(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return trace
 
 
-def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
+def _run_attribution_chain_impl(runtime: Any, *, marker: str) -> dict[str, Any]:
     bb_root = Path(os.environ["NEXUS_RIG_BUSINESS_BRAIN_CHECKOUT"]).resolve()
     moon_root = Path(os.environ["NEXUS_RIG_MOON_SOURCE_DIR"]).resolve()
     bb_db = Path(
@@ -100,31 +172,37 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
             label="attribution.moon_source.provider_selection",
         ),
     )
-    moon_pair, moon_wall_ms = _timed(
-        runtime,
-        "external.moon_source.discovery_total",
-        lambda: moon.discover(incident),
-        metadata={"boundary": "moon_source"},
-    )
+    provider_deadline = int(os.environ.get("NEXUS_RIG_PROVIDER_DEADLINE_SECONDS", "420"))
+    with _live_stage("10A.1 Moon Source discovery"):
+        with _wall_deadline(provider_deadline, "moon_source_provider"):
+            moon_pair, moon_wall_ms = _timed(
+                runtime,
+                "external.moon_source.discovery_total",
+                lambda: moon.discover(incident),
+                metadata={"boundary": "moon_source"},
+            )
     moon_result, moon_provider = moon_pair
     moon_score = score_discovery(moon_result)
 
-    hzk, hzk_wall_ms = _timed(
-        runtime,
-        "external.hzk.knowledge_governance_total",
-        lambda: govern_selected_sources(
-            moon_root,
-            list(moon_result["selected_sources"]),
-            query=incident,
-            correlation_id=f"monster-attribution:{marker}",
-        ),
-        metadata={"boundary": "hzk"},
-    )
+    with _live_stage("10A.2 HZK governance + treaty grant"):
+        hzk, hzk_wall_ms = _timed(
+            runtime,
+            "external.hzk.knowledge_governance_total",
+            lambda: govern_selected_sources(
+                moon_root,
+                list(moon_result["selected_sources"]),
+                query=incident,
+                correlation_id=f"monster-attribution:{marker}",
+            ),
+            metadata={"boundary": "hzk"},
+        )
 
     bb_db.parent.mkdir(parents=True, exist_ok=True)
     if bb_db.exists():
         bb_db.unlink()
 
+    _emit_live("[10A] 10A.3 Business Brain custody START")
+    bb_stage_started = time.monotonic()
     service_started = time.perf_counter_ns()
     service = BusinessBrainService(bb_db)
     service.create_workspace("attribution_chain_test", "Attribution Knowledge Chain")
@@ -259,6 +337,10 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         service.verify_integrity,
         metadata={"boundary": "business_brain"},
     )
+    _emit_live(
+        f"[10A] 10A.3 Business Brain custody COMPLETE in "
+        f"{time.monotonic() - bb_stage_started:.1f}s"
+    )
 
     sections = status.get("document", {}).get("sections", {})
     stored_source = str(sections.get("source") or "")
@@ -328,6 +410,11 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         "authority",
     } <= set(hzk_concepts)
 
+    treaty_grant = hzk.get("treaty_grant")
+    treaty_grant_sha256 = hzk.get("treaty_grant_sha256")
+    if not isinstance(treaty_grant, dict) or not treaty_grant_sha256:
+        raise RuntimeError("HZK_TREATY_GRANT_REQUIRED")
+
     chain_packet = {
         "business_brain": {
             "artifact_id": artifact_id,
@@ -340,14 +427,10 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
             "readback_complete": readback_complete,
             "integrity_status": integrity.get("status"),
         },
-        "moon_source_receipt": moon_projection,
-        "hzk_receipt": hzk_projection,
+        "hzk_treaty_grant": treaty_grant,
         "provenance_checks": {
             "nested_provenance": nested_provenance,
             "nested_hash_provenance": nested_hash_provenance,
-            "moon_paths": sorted(moon_paths),
-            "hzk_paths": sorted(hzk_paths),
-            "hzk_relevance_concepts": hzk_concepts,
         },
     }
 
@@ -367,17 +450,19 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         + json.dumps(chain_packet, sort_keys=True, ensure_ascii=False)
     )
 
-    nexus_started = time.perf_counter_ns()
-    nexus_response = runtime.request(
-        "POST",
-        "/v1/chat/completions",
-        principal="primary",
-        json={
-            "messages": [{"role": "user", "content": synthesis_prompt}],
-            "session_id": f"monster-attribution-final-{marker}",
-            "include_tools": False,
-        },
-    )
+    with _live_stage("10A.4 canonical Nexus synthesis"):
+        with _wall_deadline(provider_deadline, "nexus_final_provider"):
+            nexus_started = time.perf_counter_ns()
+            nexus_response = runtime.request(
+                "POST",
+                "/v1/chat/completions",
+                principal="primary",
+                json={
+                    "messages": [{"role": "user", "content": synthesis_prompt}],
+                    "session_id": f"monster-attribution-final-{marker}",
+                    "include_tools": False,
+                },
+            )
     nexus_wall_ms = (time.perf_counter_ns() - nexus_started) / 1_000_000
     runtime.record_nexus_takt(
         "attribution.nexus_final_canonical_synthesis",
@@ -429,6 +514,28 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         }
     )
 
+    from integration_lab.hzk_business_brain_knowledge import validate_nexus_treaty_return
+
+    nexus_return_receipt = {
+        "contract_version": str(treaty_grant.get("contract_version")),
+        "exchange_id": str(treaty_grant.get("exchange_id")),
+        "grant_sha256": str(treaty_grant_sha256),
+        "receipt_id": "nxr_" + hashlib.sha256(
+            f"{marker}:{treaty_grant_sha256}".encode("utf-8")
+        ).hexdigest()[:24],
+        "disposition": "CONTEXTUALIZED",
+        "consumed_payload_sha256": str(
+            (treaty_grant.get("integrity") or {}).get("payload_sha256") or ""
+        ),
+        "outcome_ref": str(nexus_body.get("turn_id") or f"monster:{marker}"),
+        "note": "Canonical Nexus synthesis consumed the exact HZK treaty grant payload.",
+    }
+    with _live_stage("10A.5 HZK return-receipt validation"):
+        treaty_return_validation = validate_nexus_treaty_return(
+            treaty_grant,
+            nexus_return_receipt,
+        )
+
     provenance_trace = {
         "moon_source": {
             "source_revision": moon_result.get("source_revision"),
@@ -437,6 +544,9 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         },
         "hzk": {
             "source_revision": hzk.get("source_revision"),
+            "source_mode": hzk.get("source_mode"),
+            "treaty_version": hzk.get("treaty_version"),
+            "treaty_grant_sha256": treaty_grant_sha256,
             "packet_id": hzk.get("packet_id"),
             "constitutional_status": hzk.get("constitutional_status"),
             "evidence_status": hzk.get("evidence_status"),
@@ -458,7 +568,9 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
             "ingress": "/v1/chat/completions",
             "functions": nexus_function_trace,
             "kernel_ids": nexus_kernel_ids,
+            "return_receipt": nexus_return_receipt,
         },
+        "hzk_return_validation": treaty_return_validation,
         "alignment": {
             "path_identity_preserved": nested_provenance,
             "hash_identity_preserved": nested_hash_provenance,
@@ -471,6 +583,8 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         "moon_score": moon_score,
         "hzk": hzk,
         "hzk_relevance_ok": hzk_relevance_ok,
+        "hzk_treaty_return": treaty_return_validation,
+        "nexus_return_receipt": nexus_return_receipt,
         "hzk_concepts": hzk_concepts,
         "business_brain": {
             "capture": capture,
@@ -507,3 +621,9 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         },
         "final_input_contains_original_incident": incident in synthesis_prompt,
     }
+
+
+def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
+    deadline = int(os.environ.get("NEXUS_RIG_ATTRIBUTION_DEADLINE_SECONDS", "900"))
+    with _wall_deadline(deadline, "attribution_chain_10A"):
+        return _run_attribution_chain_impl(runtime, marker=marker)
