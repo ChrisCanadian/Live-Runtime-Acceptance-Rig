@@ -376,6 +376,7 @@ Write-Host "Provider:      $ProviderKind / REAL" -ForegroundColor DarkGray
 Write-Host "Ingress:       /v1/chat/completions" -ForegroundColor DarkGray
 Write-Host "Attribution:   natural request -> Nexus -> governed Business Brain tool -> Nexus" -ForegroundColor DarkGray
 Write-Host "BB internals:  Moon Source -> HZK Treaty v0.3 -> disposable real Business Brain" -ForegroundColor DarkGray
+Write-Host "Return packet: exact HZK NexusGrant + Moon->BB handoff/custody; no duplicated corpus" -ForegroundColor DarkGray
 Write-Host "Provider bound: 300s cooperative stream cancel + 120s socket inactivity" -ForegroundColor DarkGray
 Write-Host ""
 
