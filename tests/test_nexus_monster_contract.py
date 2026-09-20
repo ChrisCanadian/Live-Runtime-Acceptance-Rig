@@ -130,8 +130,8 @@ def test_monster_declares_exact_check_level_plan(monkeypatch):
         for case in extended
         for name in tuple(getattr(case, "planned_checks", ()))
     ]
-    assert len(extended_planned) == 81
-    assert len(set(extended_planned)) == 81
+    assert len(extended_planned) == 82
+    assert len(set(extended_planned)) == 82
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -399,6 +399,10 @@ def test_attribution_lane_requires_model_selected_business_brain_without_routing
     assert 'risk_class="READ_ONLY"' in tool
     assert 'required_permissions=frozenset({TOOL_PERMISSION})' in tool
     assert "runtime.v5_runtime.tools.register(manifest, handler)" in tool
+    assert '"hzk_grant"' in tool
+    assert '"moon_business_brain_handoff"' in tool
+    assert "exact_hzk_grant_to_nexus" in chain
+    assert "validate_nexus_treaty_return" in chain
     assert "tool_execution_trace" in adapter
     assert "provider_proposal_id" in adapter
     assert "provider_runtime_controls_factory=self._provider_runtime_controls" in adapter
