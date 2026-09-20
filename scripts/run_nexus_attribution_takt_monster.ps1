@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "96489d74e404380dd5292d6701e59d42338592d6"
+$NDKA_SHA = "2aa2afd328c15bfea927de904e91b910d8bc5023"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "3338a101acf3c9e334e9c194d00b0ea11fb60ea9"
 $BUSINESS_BRAIN_SHA = "e873e5d5d1dc6e4e7d9492c2edaa305e12b4cfac"
