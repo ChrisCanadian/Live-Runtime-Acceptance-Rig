@@ -1,8 +1,11 @@
 """Attribution-chain acceptance composition for the full Nexus Monster.
 
-The case composes sovereign components without changing their contracts:
-Moon Source discovery -> HZK read-only knowledge governance -> Business Brain
-artifact lifecycle -> canonical kernelized Nexus synthesis.
+Moon Source discovers relevant public evidence, HZK admits it as read-only
+knowledge, Business Brain preserves it as a governed draft artifact, and the
+canonical kernelized Nexus runtime synthesizes the bounded packet.
+
+Attribution is proven by receipts/provenance, not by forcing the user-facing
+Nexus answer to narrate internal plumbing.
 """
 
 from __future__ import annotations
@@ -43,6 +46,23 @@ def _timed(runtime: Any, name: str, fn, *, metadata: Mapping[str, Any] | None = 
     return result, elapsed_ms
 
 
+def _receipt_trace(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    trace: list[dict[str, Any]] = []
+    for raw in payload.get("receipts") or ():
+        if not isinstance(raw, Mapping):
+            continue
+        trace.append(
+            {
+                "kernel_id": raw.get("kernel_id"),
+                "operation": raw.get("operation"),
+                "status": raw.get("status"),
+                "duration_ms": raw.get("duration_ms"),
+                "state_mutated": raw.get("state_mutated"),
+            }
+        )
+    return trace
+
+
 def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
     bb_root = Path(os.environ["NEXUS_RIG_BUSINESS_BRAIN_CHECKOUT"]).resolve()
     moon_root = Path(os.environ["NEXUS_RIG_MOON_SOURCE_DIR"]).resolve()
@@ -58,8 +78,8 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
     if not (moon_root / "registry" / "public-capabilities.json").is_file():
         raise FileNotFoundError(f"Moon Source corpus missing: {moon_root}")
 
-    for path in (bb_root, bb_root / "src"):
-        value = str(path)
+    for module_path in (bb_root, bb_root / "src"):
+        value = str(module_path)
         if value not in sys.path:
             sys.path.insert(0, value)
 
@@ -80,7 +100,7 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
             label="attribution.moon_source.provider_selection",
         ),
     )
-    (moon_pair, moon_wall_ms) = _timed(
+    moon_pair, moon_wall_ms = _timed(
         runtime,
         "external.moon_source.discovery_total",
         lambda: moon.discover(incident),
@@ -251,27 +271,62 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
     }
     readback_complete = expected_sections <= set(sections)
 
-    moon_paths = {
-        str(item.get("path"))
-        for item in moon_result.get("selected_sources", [])
+    moon_entries = [
+        item for item in moon_result.get("selected_sources", [])
         if isinstance(item, dict)
-    }
-    hzk_paths = {
-        str(item.get("source_path"))
-        for item in hzk.get("entries", [])
+    ]
+    hzk_entries = [
+        item for item in hzk.get("entries", [])
         if isinstance(item, dict)
-    }
+    ]
+    moon_paths = {str(item.get("path")) for item in moon_entries}
+    hzk_paths = {str(item.get("source_path")) for item in hzk_entries}
+
     stored_hzk = (
         json.loads(str(sections.get("hzk_knowledge") or "{}"))
         if readback_complete
         else {}
     )
-    stored_hzk_paths = {
-        str(item.get("source_path"))
-        for item in stored_hzk.get("entries", [])
+    stored_hzk_entries = [
+        item for item in stored_hzk.get("entries", [])
         if isinstance(item, dict)
+    ]
+    stored_hzk_paths = {str(item.get("source_path")) for item in stored_hzk_entries}
+
+    moon_hashes = {
+        str(item.get("path")): str(item.get("source_sha256") or "")
+        for item in moon_entries
     }
+    hzk_hashes = {
+        str(item.get("source_path")): str(item.get("source_sha256") or "")
+        for item in hzk_entries
+    }
+    stored_hzk_hashes = {
+        str(item.get("source_path")): str(item.get("source_sha256") or "")
+        for item in stored_hzk_entries
+    }
+
     nested_provenance = moon_paths == hzk_paths == stored_hzk_paths and bool(moon_paths)
+    nested_hash_provenance = (
+        moon_hashes == hzk_hashes == stored_hzk_hashes
+        and bool(moon_hashes)
+        and all(moon_hashes.values())
+    )
+
+    hzk_concepts = sorted(
+        {
+            str(concept)
+            for item in hzk_entries
+            for concept in (item.get("concepts") or [])
+            if str(concept)
+        }
+    )
+    hzk_relevance_ok = {
+        "attribution",
+        "lineage",
+        "provenance",
+        "authority",
+    } <= set(hzk_concepts)
 
     chain_packet = {
         "business_brain": {
@@ -289,23 +344,29 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         "hzk_receipt": hzk_projection,
         "provenance_checks": {
             "nested_provenance": nested_provenance,
+            "nested_hash_provenance": nested_hash_provenance,
             "moon_paths": sorted(moon_paths),
             "hzk_paths": sorted(hzk_paths),
+            "hzk_relevance_concepts": hzk_concepts,
         },
     }
 
     synthesis_prompt = (
-        "You are the final Nexus synthesis boundary for an attribution acceptance test. "
-        "You receive ONLY a bounded Business Brain packet plus nested Moon Source and HZK "
-        "receipts. Preserve authority boundaries. Current integration topology is not proof "
-        "of historical lineage. Conceptual influence is not automatically coauthorship. "
-        "Return ONLY one JSON object with fields status, synthesis, authority_map, "
-        "rejected_overclaims, unresolved, claim_ceiling. status must be PASS. "
-        "authority_map must keep Moon Source, HZK, Business Brain, and Nexus distinct. "
-        "rejected_overclaims must explicitly reject topology-implies-lineage and "
-        "influence-implies-coauthorship.\n\nCHAIN_PACKET:\n"
+        "Synthesize the bounded evidence packet below into a concise user-facing answer. "
+        "The answer should focus on the substantive attribution/lineage resolution and "
+        "evidence, not narrate internal pipeline mechanics merely for attribution. "
+        "The application exposes source/system provenance separately through receipts. "
+        "Do not claim that current integration topology proves historical lineage. "
+        "Do not claim that conceptual influence automatically creates coauthorship. "
+        "Return ONLY one JSON object with fields status, answer, "
+        "guardrail_acknowledgements, unresolved, claim_ceiling. "
+        "status must be PASS. answer must be natural prose suitable to show directly "
+        "to a user. guardrail_acknowledgements must contain exactly these two values: "
+        "current_topology_not_historical_lineage and "
+        "conceptual_influence_not_automatic_coauthorship.\n\nCHAIN_PACKET:\n"
         + json.dumps(chain_packet, sort_keys=True, ensure_ascii=False)
     )
+
     nexus_started = time.perf_counter_ns()
     nexus_response = runtime.request(
         "POST",
@@ -323,6 +384,7 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         nexus_wall_ms,
         metadata={"boundary": "canonical_v1_chat_completions"},
     )
+
     try:
         nexus_body = nexus_response.json()
     except Exception:
@@ -335,14 +397,81 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         nexus_json = {}
         nexus_json_error = f"{type(exc).__name__}: {exc}"
 
-    authority_text = json.dumps(nexus_json.get("authority_map") or []).lower()
-    rejected_text = json.dumps(nexus_json.get("rejected_overclaims") or []).lower()
+    answer = str(nexus_json.get("answer") or "").strip()
+    acknowledgements = {
+        str(value)
+        for value in (nexus_json.get("guardrail_acknowledgements") or [])
+    }
+    guardrails_ok = acknowledgements == {
+        "current_topology_not_historical_lineage",
+        "conceptual_influence_not_automatic_coauthorship",
+    }
+    substantive_terms = {
+        "attribution",
+        "lineage",
+        "provenance",
+        "authorship",
+        "coauthorship",
+        "authority",
+        "evidence",
+        "source",
+    }
+    answer_terms = {
+        term for term in substantive_terms if term in answer.lower()
+    }
+
+    nexus_function_trace = _receipt_trace(nexus_body)
+    nexus_kernel_ids = sorted(
+        {
+            str(item.get("kernel_id"))
+            for item in nexus_function_trace
+            if item.get("kernel_id")
+        }
+    )
+
+    provenance_trace = {
+        "moon_source": {
+            "source_revision": moon_result.get("source_revision"),
+            "selected_evidence": moon_entries,
+            "relevance": moon_score,
+        },
+        "hzk": {
+            "source_revision": hzk.get("source_revision"),
+            "packet_id": hzk.get("packet_id"),
+            "constitutional_status": hzk.get("constitutional_status"),
+            "evidence_status": hzk.get("evidence_status"),
+            "entries": hzk_entries,
+            "concepts": hzk_concepts,
+            "authority_clean": hzk.get("authority_clean"),
+            "state_unchanged": hzk.get("state_unchanged"),
+        },
+        "business_brain": {
+            "artifact_id": artifact_id,
+            "artifact_version": status.get("artifact_version"),
+            "state": status.get("state"),
+            "capture_receipt_id": capture.get("receipt_id"),
+            "distill_receipt_id": distill.get("receipt_id"),
+            "status_receipt_id": status.get("receipt_id"),
+            "integrity_status": integrity.get("status"),
+        },
+        "nexus": {
+            "ingress": "/v1/chat/completions",
+            "functions": nexus_function_trace,
+            "kernel_ids": nexus_kernel_ids,
+        },
+        "alignment": {
+            "path_identity_preserved": nested_provenance,
+            "hash_identity_preserved": nested_hash_provenance,
+        },
+    }
 
     return {
         "moon_result": moon_result,
         "moon_provider": moon_provider,
         "moon_score": moon_score,
         "hzk": hzk,
+        "hzk_relevance_ok": hzk_relevance_ok,
+        "hzk_concepts": hzk_concepts,
         "business_brain": {
             "capture": capture,
             "distill": distill,
@@ -352,23 +481,20 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
             "readback_complete": readback_complete,
         },
         "chain_packet": chain_packet,
+        "provenance_trace": provenance_trace,
         "nested_provenance": nested_provenance,
+        "nested_hash_provenance": nested_hash_provenance,
         "nexus": {
             "status_code": getattr(nexus_response, "status_code", None),
             "body_state": nexus_body.get("state"),
             "text": nexus_text,
             "parsed": nexus_json,
             "parse_error": nexus_json_error,
-            "authority_distinct": all(
-                value in authority_text
-                for value in ("moon source", "hzk", "business brain", "nexus")
-            ),
-            "topology_lineage_rejected": (
-                "topology" in rejected_text and "lineage" in rejected_text
-            ),
-            "influence_coauthorship_rejected": (
-                "influence" in rejected_text and "coauthor" in rejected_text
-            ),
+            "answer": answer,
+            "answer_terms": sorted(answer_terms),
+            "guardrails_ok": guardrails_ok,
+            "function_trace": nexus_function_trace,
+            "kernel_ids": nexus_kernel_ids,
         },
         "timings_ms": {
             "moon_source_total": round(moon_wall_ms, 6),
