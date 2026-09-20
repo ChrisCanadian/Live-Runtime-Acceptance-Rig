@@ -18,7 +18,7 @@ $GeneratedScript = Join-Path $PSScriptRoot ".run_nexus_attribution_takt_monster_
 $OldNdka = '0b7ae91064aae6e1351c9789d6722dd60b0f290d'
 $NewNdka = 'dcf47598ad441fbeb63dbb4f662adb1b0b1c3e2c'
 $OldBusinessBrain = '9e42fe0c6d6254745dc52c73b7d6755c0342932e'
-$NewBusinessBrain = 'd518679ccaa533ebc96c92ee6558e0fd08eeb252'
+$NewBusinessBrain = 'd1aa0a6e25da0a97f0fe6fef54c4406c0328076d'
 
 $text = [System.IO.File]::ReadAllText($SourceScript)
 if (-not $text.Contains($OldNdka)) {
