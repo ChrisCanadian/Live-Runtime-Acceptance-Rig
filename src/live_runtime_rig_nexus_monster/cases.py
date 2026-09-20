@@ -570,6 +570,72 @@ class ReceiptCoverageGateCase:
         return CaseResult(checks=checks, evidence={"coverage": coverage})
 
 
+
+class MonsterTaktCase:
+    planned_checks = (
+        "Observer-side Nexus takt samples were captured",
+        "Full governed chat wall takt is represented",
+        "Internal kernel timing availability is explicitly classified",
+        "Timing evidence preserves source and boundary classification",
+    )
+    name = "monster-takt-timing"
+    suite = "11 TAKT / PERFORMANCE OBSERVATION"
+
+    def run(self, runtime, database, context) -> CaseResult:
+        del database, context
+        timing = dict(runtime.request("GET", "/takt").json())
+        samples = list(timing.get("samples") or ())
+        aggregates = list(timing.get("aggregates") or ())
+        observer = [item for item in samples if item.get("source") == "observer_wall"]
+        kernel = [item for item in samples if item.get("source") == "kernel_receipt"]
+        chat = [
+            item for item in aggregates
+            if item.get("name") in {"runtime.chat.total", "runtime.request.total"}
+            and item.get("source") == "observer_wall"
+        ]
+        internal_status = "OBSERVED" if kernel else "NOT_EXPOSED_BY_RUNTIME"
+        classified = all(
+            item.get("source") in {"observer_wall", "kernel_receipt", "external_boundary"}
+            and item.get("boundary") in {"nexus", "external"}
+            for item in samples
+        )
+        checks = [
+            _check(
+                "Observer-side Nexus takt samples were captured",
+                bool(observer),
+                ">=1 observer_wall sample",
+                len(observer),
+            ),
+            _check(
+                "Full governed chat wall takt is represented",
+                bool(chat),
+                "runtime.chat.total or runtime.request.total observer timing",
+                [item.get("name") for item in chat],
+            ),
+            _check(
+                "Internal kernel timing availability is explicitly classified",
+                internal_status in {"OBSERVED", "NOT_EXPOSED_BY_RUNTIME"},
+                "OBSERVED or NOT_EXPOSED_BY_RUNTIME",
+                internal_status,
+            ),
+            _check(
+                "Timing evidence preserves source and boundary classification",
+                classified,
+                True,
+                classified,
+            ),
+        ]
+        return CaseResult(
+            checks=checks,
+            evidence={
+                "takt": timing,
+                "internal_kernel_timing_status": internal_status,
+                "observer_sample_count": len(observer),
+                "kernel_receipt_sample_count": len(kernel),
+            },
+        )
+
+
 def register_cases(_config: Any):
     # Order matters: the final gate evaluates accumulated evidence from every
     # preceding scenario. No required full-runtime flight control is represented
@@ -585,4 +651,5 @@ def register_cases(_config: Any):
         JobsArtifactsCase(),
         FaultInjectionCase(),
         ReceiptCoverageGateCase(),
+        MonsterTaktCase(),
     ]
