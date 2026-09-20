@@ -286,6 +286,24 @@ $ShortV5 = $V5_SHA.Substring(0, 7)
 $ImageTag = "nexus-kernelized-fixture-local:$ShortNdka-$ShortV5"
 $Dockerfile = Join-Path $RigRoot "containers\Dockerfile.ndka-full-monster-real"
 
+$BuildManifest = [ordered]@{
+    schema_version = "nexus-monster-build-v1"
+    ndka_sha = $NDKA_SHA
+    production_sha = $PRODUCTION_SHA
+    v5_sha = $V5_SHA
+    business_brain_sha = $BUSINESS_BRAIN_SHA
+    moon_source_sha = $MOON_SOURCE_SHA
+    hzk_sha = $HZK_SHA
+    image_tag = $ImageTag
+    provider_kind = $ProviderKind
+}
+$BuildManifestPath = Join-Path $ArtifactRoot "BUILD_MANIFEST.json"
+[System.IO.File]::WriteAllText(
+    $BuildManifestPath,
+    ($BuildManifest | ConvertTo-Json -Depth 4),
+    $Utf8NoBom
+)
+
 Write-Host ""
 Write-Host "Building/reusing Linux runtime image ..." -ForegroundColor Cyan
 $BuildOutput = & docker build `
