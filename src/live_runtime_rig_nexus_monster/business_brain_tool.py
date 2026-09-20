@@ -170,6 +170,7 @@ def register_business_brain_tool(
                 "hzk_grant",
                 "moon_business_brain_handoff",
                 "provenance",
+                "provider_projection",
                 "transport",
             ],
             "properties": {
@@ -177,6 +178,7 @@ def register_business_brain_tool(
                 "hzk_grant": {"type": "object"},
                 "moon_business_brain_handoff": {"type": "object"},
                 "provenance": {"type": "object"},
+                "provider_projection": {"type": "object"},
                 "transport": {"type": "object"},
             },
             "additionalProperties": False,
