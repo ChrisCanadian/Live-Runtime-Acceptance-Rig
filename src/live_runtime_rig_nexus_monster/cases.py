@@ -560,7 +560,7 @@ class AttributionKnowledgeChainCase:
         "Kernelized Nexus releases the final answer after the tool round",
         "Final Nexus answer contains substantive attribution resolution",
         "Nexus receipt chain includes tools provider evidence correction and release",
-        "Provider telemetry proves a second inference round consumed tool results",
+        "Provider telemetry proves round two consumed the exact Business Brain handoff",
         "Completed Nexus provider rounds expose token and latency telemetry",
         "Full Business Brain handshake evidence remains inspectable outside model context",
     )
@@ -663,6 +663,7 @@ class AttributionKnowledgeChainCase:
             len(provider_telemetry) >= 2
             and int(first_round.get("tool_result_count") or 0) == 0
             and int(final_round.get("tool_result_count") or 0) >= 1
+            and result.get("exact_handoff_entered_second_round") is True
         )
         completed_rounds = [
             item for item in provider_telemetry if item.get("completed") is True
@@ -746,6 +747,8 @@ class AttributionKnowledgeChainCase:
             f"HZK treaty wire delivered: {transport.get('hzk_grant_wire_bytes')} bytes",
             f"Moon -> Business Brain handoff: {transport.get('moon_business_brain_handoff_bytes')} bytes",
             f"Total Nexus tool result: {transport.get('nexus_tool_result_bytes')} bytes",
+            f"Exact BB handoff entered Nexus round 2: {result.get('exact_handoff_entered_second_round')}",
+            f"BB handoff SHA256: {result.get('nexus_handoff_sha256')}",
             f"HZK treaty return validation: {treaty_return.get('status')}",
             f"Business Brain state: {(moon_bb_handoff.get('business_brain_artifact') or {}).get('state')}",
             "",
@@ -968,13 +971,24 @@ class AttributionKnowledgeChainCase:
                 receipt_ids,
             ),
             _check(
-                "Provider telemetry proves a second inference round consumed tool results",
+                "Provider telemetry proves round two consumed the exact Business Brain handoff",
                 second_round_ok,
-                {"rounds": ">=2", "first_tool_results": 0, "final_tool_results": ">=1"},
+                {
+                    "rounds": ">=2",
+                    "first_tool_results": 0,
+                    "exact_business_brain_handoff": True,
+                },
                 {
                     "rounds": len(provider_telemetry),
                     "first_tool_results": first_round.get("tool_result_count"),
                     "final_tool_results": final_round.get("tool_result_count"),
+                    "handoff_sha256": result.get("nexus_handoff_sha256"),
+                    "exact_handoff_entered_second_round": result.get(
+                        "exact_handoff_entered_second_round"
+                    ),
+                    "business_brain_tool_results": result.get(
+                        "second_round_business_brain_tool_results"
+                    ),
                 },
             ),
             _check(
