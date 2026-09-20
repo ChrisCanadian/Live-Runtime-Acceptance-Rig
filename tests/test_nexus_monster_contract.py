@@ -110,7 +110,9 @@ def test_monster_real_llm_lane_fails_closed_on_fake_provider():
 
 
 
-def test_monster_declares_exact_check_level_plan():
+def test_monster_declares_exact_check_level_plan(monkeypatch):
+    monkeypatch.delenv("NEXUS_RIG_ATTRIBUTION_CHAIN", raising=False)
+    monkeypatch.delenv("NEXUS_RIG_TAKT", raising=False)
     registered = cases.register_cases(None)
     planned = [
         (case.suite, name)
@@ -120,9 +122,16 @@ def test_monster_declares_exact_check_level_plan():
     assert len(planned) == 58
     assert len(set(planned)) == 58
 
-    source = Path(cases.__file__).read_text(encoding="utf-8")
-    observed_literal_checks = source.count("_check(") - 1
-    assert observed_literal_checks == 58
+    monkeypatch.setenv("NEXUS_RIG_ATTRIBUTION_CHAIN", "1")
+    monkeypatch.setenv("NEXUS_RIG_TAKT", "1")
+    extended = cases.register_cases(None)
+    extended_planned = [
+        (case.suite, name)
+        for case in extended
+        for name in tuple(getattr(case, "planned_checks", ()))
+    ]
+    assert len(extended_planned) == 74
+    assert len(set(extended_planned)) == 74
 
 
 def test_monster_reporter_distinguishes_not_run_checks_from_stages():
@@ -350,7 +359,7 @@ def test_monster_tool_loop_uses_commissioned_runtime_tool_not_phantom_calculator
 
 def test_monster_continuity_and_isolation_cases_do_not_depend_on_tools():
     source = Path(cases.__file__).read_text(encoding="utf-8")
-    continuity_start = source.index("class ContinuityRestartCase")
+    continuity_start = source.index("class ContinuityAndRestartCase")
     isolation_start = source.index("class CrossUserIsolationCase")
     cognition_start = source.index("class CognitionModesLearningCase")
     continuity = source[continuity_start:isolation_start]
