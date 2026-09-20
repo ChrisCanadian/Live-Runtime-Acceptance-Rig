@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from live_runtime_rig_nexus_monster.attribution_chain import _clean_json
+from live_runtime_rig_nexus_monster.attribution_chain import (
+    ATTRIBUTION_SCENARIO,
+    FORBIDDEN_ROUTING_BUMPERS,
+)
 from live_runtime_rig_nexus_monster.cases import register_cases
 
 
@@ -28,8 +31,7 @@ def test_attribution_and_takt_lane_orders_gates_correctly(monkeypatch) -> None:
     assert names[-1] == "monster-takt-timing"
 
 
-def test_clean_json_accepts_fenced_provider_output() -> None:
-    parsed = _clean_json('''```json
-{"status":"PASS","authority_map":[]}
-```''')
-    assert parsed["status"] == "PASS"
+def test_attribution_stimulus_does_not_force_internal_route() -> None:
+    lowered = ATTRIBUTION_SCENARIO.casefold()
+    assert ATTRIBUTION_SCENARIO.strip()
+    assert not [marker for marker in FORBIDDEN_ROUTING_BUMPERS if marker in lowered]
