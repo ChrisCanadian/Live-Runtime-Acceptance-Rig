@@ -132,6 +132,7 @@ class CaseResult:
     evidence: Mapping[str, Any] = field(default_factory=dict)
     cleanup_entries: list[CleanupEntry] = field(default_factory=list)
     state_updates: Mapping[str, Any] = field(default_factory=dict)
+    operator_output: Sequence[str] = field(default_factory=tuple)
 
 
 @runtime_checkable
