@@ -7,6 +7,7 @@ flight control, the check FAILs and the final receipt-coverage gate remains red.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Mapping
 
