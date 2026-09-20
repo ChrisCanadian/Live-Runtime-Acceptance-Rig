@@ -162,6 +162,13 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         sort_keys=True,
         ensure_ascii=False,
     )
+    handoff_canonical = json.dumps(
+        nexus_handoff,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    nexus_handoff_sha256 = hashlib.sha256(handoff_canonical).hexdigest()
 
     trace_payload = (
         dict((business_brain_trace or {}).get("trace") or {})
@@ -227,6 +234,19 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
 
     first_round = provider_telemetry[0] if provider_telemetry else {}
     final_round = provider_telemetry[-1] if provider_telemetry else {}
+    final_round_tool_results = [
+        item for item in (final_round.get("tool_results") or ())
+        if isinstance(item, Mapping)
+    ]
+    bb_provider_results = [
+        item for item in final_round_tool_results
+        if str(item.get("tool_id") or "") == "business_brain.resolve_attribution"
+    ]
+    exact_handoff_entered_second_round = (
+        len(bb_provider_results) == 1
+        and str(bb_provider_results[0].get("output_sha256") or "")
+        == nexus_handoff_sha256
+    )
 
     return {
         "scenario": scenario,
@@ -247,6 +267,9 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         "business_brain_trace": business_brain_trace,
         "nexus_handoff": nexus_handoff,
         "nexus_handoff_bytes": len(handoff_serialized.encode("utf-8")),
+        "nexus_handoff_sha256": nexus_handoff_sha256,
+        "exact_handoff_entered_second_round": exact_handoff_entered_second_round,
+        "second_round_business_brain_tool_results": bb_provider_results,
         "exact_hzk_grant_to_nexus": exact_hzk_grant_to_nexus,
         "moon_business_brain_handoff_present": isinstance(
             nexus_handoff.get("moon_business_brain_handoff"), Mapping
