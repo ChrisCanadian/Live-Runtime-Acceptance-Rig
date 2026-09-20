@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $NDKA_SHA = "c83c60f5a64a97de9fba34cff3c9479a927e7a58"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "48932a94a58f24f54b2fbe81c9d400ddb32f82ed"
-$BUSINESS_BRAIN_SHA = "1f2e927064d71ee2f0d35dd199ff377628fe09ee"
+$BUSINESS_BRAIN_SHA = "331f7b3421e8f64844603e751e6cd9b0b5213e79"
 $MOON_SOURCE_SHA = "f0cee0018e8cd8d0bfe2434956c8878e4c3cb44b"
 
 $RigRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
