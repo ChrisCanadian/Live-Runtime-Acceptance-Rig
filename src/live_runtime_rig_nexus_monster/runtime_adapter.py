@@ -11,6 +11,7 @@ can distinguish canonical-turn participation from bounded manager exercise.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
@@ -47,6 +48,16 @@ def _safe_json_bytes(value: Any) -> int:
             ensure_ascii=False,
         ).encode("utf-8")
     )
+
+
+def _safe_json_sha256(value: Any) -> str:
+    payload = json.dumps(
+        _safe_json_value(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _operator_line(message: str) -> None:
@@ -243,6 +254,20 @@ class KernelizedMonsterRuntimeAdapter:
             if str(getattr(item, "tool_id", "") or "")
         )
         tool_results = tuple(getattr(request, "tool_results", ()) or ())
+        tool_result_observations = []
+        for item in tool_results:
+            output = getattr(item, "output", {})
+            tool_result_observations.append(
+                {
+                    "proposal_id": getattr(item, "proposal_id", None),
+                    "execution_id": getattr(item, "execution_id", None),
+                    "tool_id": getattr(item, "tool_id", None),
+                    "status": getattr(item, "status", None),
+                    "output_bytes": _safe_json_bytes(output),
+                    "output_sha256": _safe_json_sha256(output),
+                }
+            )
+
         record: dict[str, Any] = {
             "turn_id": turn_id,
             "round": round_number,
@@ -259,6 +284,7 @@ class KernelizedMonsterRuntimeAdapter:
             ),
             "tool_result_count": len(tool_results),
             "tool_result_bytes": _safe_json_bytes(tool_results),
+            "tool_results": tool_result_observations,
             "started_monotonic": started,
             "deadline_seconds": deadline_seconds,
             "stream_chunks_observed": 0,
