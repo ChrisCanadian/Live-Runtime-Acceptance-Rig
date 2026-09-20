@@ -4,7 +4,10 @@ from live_runtime_rig_nexus_monster.attribution_chain import (
     ATTRIBUTION_SCENARIO,
     FORBIDDEN_ROUTING_BUMPERS,
 )
-from live_runtime_rig_nexus_monster.cases import register_cases
+from live_runtime_rig_nexus_monster.cases import (
+    _completed_provider_round_has_telemetry,
+    register_cases,
+)
 
 
 def _names(cases):
@@ -35,3 +38,42 @@ def test_attribution_stimulus_does_not_force_internal_route() -> None:
     lowered = ATTRIBUTION_SCENARIO.casefold()
     assert ATTRIBUTION_SCENARIO.strip()
     assert not [marker for marker in FORBIDDEN_ROUTING_BUMPERS if marker in lowered]
+
+def test_tool_call_only_provider_round_does_not_require_first_token_latency() -> None:
+    assert _completed_provider_round_has_telemetry(
+        {
+            "completed": True,
+            "input_token_count": 4544,
+            "output_token_count": 306,
+            "first_token_latency_ms": None,
+            "total_latency_ms": 4882,
+            "provider_chunk_count": 0,
+            "response_bytes": 0,
+        }
+    )
+
+
+def test_streamed_provider_round_still_requires_first_token_latency() -> None:
+    assert not _completed_provider_round_has_telemetry(
+        {
+            "completed": True,
+            "input_token_count": 40875,
+            "output_token_count": 937,
+            "first_token_latency_ms": None,
+            "total_latency_ms": 12205,
+            "provider_chunk_count": 187,
+            "response_bytes": 3435,
+        }
+    )
+    assert _completed_provider_round_has_telemetry(
+        {
+            "completed": True,
+            "input_token_count": 40875,
+            "output_token_count": 937,
+            "first_token_latency_ms": 6530,
+            "total_latency_ms": 12205,
+            "provider_chunk_count": 187,
+            "response_bytes": 3435,
+        }
+    )
+
