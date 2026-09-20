@@ -30,6 +30,41 @@ def _status_ok(value: Any) -> bool:
     return str(value or "").strip().casefold() == "ok"
 
 
+def _completed_provider_round_has_telemetry(item: Mapping[str, Any]) -> bool:
+    """Validate telemetry without pretending every provider round streams text.
+
+    A model round that returns only a tool proposal can complete successfully
+    with usage + total latency while emitting zero user-visible stream chunks.
+    First-token latency is meaningful only when response bytes/chunks exist.
+    """
+    common_complete = (
+        isinstance(item.get("input_token_count"), int)
+        and isinstance(item.get("output_token_count"), int)
+        and isinstance(item.get("total_latency_ms"), int)
+        and int(item.get("input_token_count") or 0) >= 0
+        and int(item.get("output_token_count") or 0) >= 0
+        and int(item.get("total_latency_ms") or 0) >= 0
+    )
+    if not common_complete:
+        return False
+
+    response_bytes = int(item.get("response_bytes") or 0)
+    chunk_count = int(item.get("provider_chunk_count") or 0)
+    first_token = item.get("first_token_latency_ms")
+
+    if response_bytes > 0 or chunk_count > 0:
+        return (
+            response_bytes > 0
+            and chunk_count > 0
+            and isinstance(first_token, int)
+            and first_token >= 0
+        )
+
+    # Tool-call-only rounds can have provider output tokens but no visible text
+    # stream. Their latency is still measured by total_latency_ms.
+    return response_bytes == 0 and chunk_count == 0 and first_token is None
+
+
 def _payload(response: Any) -> Mapping[str, Any]:
     try:
         value = response.json()
@@ -669,11 +704,7 @@ class AttributionKnowledgeChainCase:
             item for item in provider_telemetry if item.get("completed") is True
         ]
         telemetry_complete = bool(completed_rounds) and all(
-            isinstance(item.get("input_token_count"), int)
-            and isinstance(item.get("output_token_count"), int)
-            and isinstance(item.get("first_token_latency_ms"), int)
-            and isinstance(item.get("total_latency_ms"), int)
-            and int(item.get("provider_chunk_count") or 0) > 0
+            _completed_provider_round_has_telemetry(item)
             for item in completed_rounds
         )
 
@@ -867,10 +898,18 @@ class AttributionKnowledgeChainCase:
             _check(
                 "Moon Source selects sufficient relevant governed evidence",
                 moon_score.get("status") == "PASS" and bool(selected_sources),
-                {"status": "PASS", "selected_sources": ">0"},
+                {"status": "PASS", "selected_sources": ">0", "failed_checks": []},
                 {
                     "status": moon_score.get("status"),
                     "selected_sources": len(selected_sources),
+                    "failed_checks": list(moon_score.get("failed_checks") or ()),
+                    "core_relevance_ok": moon_score.get("core_relevance_ok"),
+                    "support_relevance_ok": moon_score.get("support_relevance_ok"),
+                    "evidence_payload_complete": moon_score.get("evidence_payload_complete"),
+                    "compatibility_pointer_ok": moon_score.get("compatibility_pointer_ok"),
+                    "false_claims_rejected": moon_score.get("false_claims_rejected"),
+                    "moon_source_authorship_preserved": moon_score.get("moon_source_authorship_preserved"),
+                    "business_brain_local_authorship_preserved": moon_score.get("business_brain_local_authorship_preserved"),
                 },
             ),
             _check(
