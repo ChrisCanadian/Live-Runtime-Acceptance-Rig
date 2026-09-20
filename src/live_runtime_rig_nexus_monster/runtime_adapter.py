@@ -1149,6 +1149,21 @@ class KernelizedMonsterRuntimeAdapter:
         }
         return raw, content
 
+    def record_nexus_takt(
+        self,
+        name: str,
+        duration_ms: float,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._takt.record(
+            name,
+            duration_ms,
+            source="observer_wall",
+            boundary="nexus",
+            metadata=metadata,
+        )
+
     def record_external_takt(
         self,
         name: str,
