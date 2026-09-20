@@ -313,6 +313,7 @@ $dockerArgs = @(
     "-e", "NEXUS_RIG_RUNTIME_PROFILE=development_fixture",
     "-e", "NEXUS_RIG_PROVIDER_KIND=$ProviderKind",
     "-e", "NEXUS_RIG_ATTRIBUTION_CHAIN=1",
+    "-e", "NEXUS_RIG_TAKT=1",
     "-e", "NEXUS_RIG_BUSINESS_BRAIN_CHECKOUT=/business-brain",
     "-e", "NEXUS_RIG_MOON_SOURCE_DIR=/moon-source",
     "-e", "NEXUS_RIG_BUSINESS_BRAIN_DB_PATH=/run/state/business-brain-attribution.db",
