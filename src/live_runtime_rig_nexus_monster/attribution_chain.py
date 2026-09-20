@@ -169,6 +169,25 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         ensure_ascii=False,
     ).encode("utf-8")
     nexus_handoff_sha256 = hashlib.sha256(handoff_canonical).hexdigest()
+    provider_projection = (
+        dict(nexus_handoff.get("provider_projection") or {})
+        if isinstance(nexus_handoff.get("provider_projection"), Mapping)
+        else {}
+    )
+    provider_projection_serialized = json.dumps(
+        provider_projection,
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    provider_projection_canonical = json.dumps(
+        provider_projection,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    provider_projection_sha256 = hashlib.sha256(
+        provider_projection_canonical
+    ).hexdigest()
 
     trace_payload = (
         dict((business_brain_trace or {}).get("trace") or {})
@@ -242,10 +261,11 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         item for item in final_round_tool_results
         if str(item.get("tool_id") or "") == "business_brain.resolve_attribution"
     ]
-    exact_handoff_entered_second_round = (
+    exact_projection_entered_second_round = (
         len(bb_provider_results) == 1
+        and bool(provider_projection)
         and str(bb_provider_results[0].get("output_sha256") or "")
-        == nexus_handoff_sha256
+        == provider_projection_sha256
     )
 
     return {
@@ -268,7 +288,11 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
         "nexus_handoff": nexus_handoff,
         "nexus_handoff_bytes": len(handoff_serialized.encode("utf-8")),
         "nexus_handoff_sha256": nexus_handoff_sha256,
-        "exact_handoff_entered_second_round": exact_handoff_entered_second_round,
+        "provider_projection": provider_projection,
+        "provider_projection_bytes": len(provider_projection_serialized.encode("utf-8")),
+        "provider_projection_sha256": provider_projection_sha256,
+        "provider_projection_contains_raw_hzk_payload": "payload_text" in provider_projection_serialized,
+        "exact_projection_entered_second_round": exact_projection_entered_second_round,
         "second_round_business_brain_tool_results": bb_provider_results,
         "exact_hzk_grant_to_nexus": exact_hzk_grant_to_nexus,
         "moon_business_brain_handoff_present": isinstance(

@@ -12,10 +12,10 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "2aa2afd328c15bfea927de904e91b910d8bc5023"
-$PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
+$NDKA_SHA = "0b7ae91064aae6e1351c9789d6722dd60b0f290d"
+$PRODUCTION_SHA = "dbcaadefd0624dbf5b46948b676c8a5a1db9b0fe"
 $V5_SHA = "3338a101acf3c9e334e9c194d00b0ea11fb60ea9"
-$BUSINESS_BRAIN_SHA = "ea7cc5f124edd772ebcb3edf502ec003da9b5b5f"
+$BUSINESS_BRAIN_SHA = "9e42fe0c6d6254745dc52c73b7d6755c0342932e"
 $MOON_SOURCE_SHA = "f0cee0018e8cd8d0bfe2434956c8878e4c3cb44b"
 $HZK_SHA = "c93b481f2ccfcc5ab4bd74f0abd09a9375b577f6"
 
@@ -286,6 +286,24 @@ $ShortV5 = $V5_SHA.Substring(0, 7)
 $ImageTag = "nexus-kernelized-fixture-local:$ShortNdka-$ShortV5"
 $Dockerfile = Join-Path $RigRoot "containers\Dockerfile.ndka-full-monster-real"
 
+$BuildManifest = [ordered]@{
+    schema_version = "nexus-monster-build-v1"
+    ndka_sha = $NDKA_SHA
+    production_sha = $PRODUCTION_SHA
+    v5_sha = $V5_SHA
+    business_brain_sha = $BUSINESS_BRAIN_SHA
+    moon_source_sha = $MOON_SOURCE_SHA
+    hzk_sha = $HZK_SHA
+    image_tag = $ImageTag
+    provider_kind = $ProviderKind
+}
+$BuildManifestPath = Join-Path $ArtifactRoot "BUILD_MANIFEST.json"
+[System.IO.File]::WriteAllText(
+    $BuildManifestPath,
+    ($BuildManifest | ConvertTo-Json -Depth 4),
+    $Utf8NoBom
+)
+
 Write-Host ""
 Write-Host "Building/reusing Linux runtime image ..." -ForegroundColor Cyan
 $BuildOutput = & docker build `
@@ -376,7 +394,7 @@ Write-Host "Provider:      $ProviderKind / REAL" -ForegroundColor DarkGray
 Write-Host "Ingress:       /v1/chat/completions" -ForegroundColor DarkGray
 Write-Host "Attribution:   natural request -> Nexus -> governed Business Brain tool -> Nexus" -ForegroundColor DarkGray
 Write-Host "BB internals:  Moon Source -> HZK Treaty v0.3 -> disposable real Business Brain" -ForegroundColor DarkGray
-Write-Host "Return packet: exact HZK NexusGrant + Moon->BB handoff/custody; no duplicated corpus" -ForegroundColor DarkGray
+Write-Host "Return packet: exact HZK NexusGrant retained in Nexus custody + bounded provider projection" -ForegroundColor DarkGray
 Write-Host "Provider bound: 300s cooperative stream cancel + 120s socket inactivity" -ForegroundColor DarkGray
 Write-Host ""
 

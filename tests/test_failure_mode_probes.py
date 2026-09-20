@@ -378,3 +378,41 @@ def test_finalization_failure_returns_framework_error(tmp_path) -> None:
     runner.evidence.write_report = fail_report
     assert runner.run() == 1
     assert runner.framework_status == "ERROR"
+
+
+
+def test_evidence_bundle_serializes_sets_as_deterministic_arrays(tmp_path) -> None:
+    bundle = EvidenceBundle(
+        tmp_path,
+        "ACCEPTANCE_SET_JSON",
+        public_safe=False,
+        redactor=Redactor(environment_values=[]),
+    )
+    bundle.write_json(
+        "artifact.json",
+        {
+            "plain": {"beta", "alpha"},
+            "nested": [{"values": frozenset({3, 1, 2})}],
+        },
+    )
+    payload = json.loads((bundle.root / "artifact.json").read_text(encoding="utf-8"))
+    assert payload["plain"] == ["alpha", "beta"]
+    assert payload["nested"] == [{"values": [1, 2, 3]}]
+
+
+def test_public_safe_evidence_bundle_serializes_and_redacts_sets(tmp_path) -> None:
+    bundle = EvidenceBundle(
+        tmp_path,
+        "ACCEPTANCE_PUBLIC_SET_JSON",
+        public_safe=True,
+        redactor=Redactor(
+            secrets=["secret-value"],
+            environment_values=[],
+        ),
+    )
+    bundle.write_json(
+        "artifact.json",
+        {"values": {"secret-value", "visible"}},
+    )
+    payload = json.loads((bundle.root / "artifact.json").read_text(encoding="utf-8"))
+    assert payload["values"] == ["[REDACTED_VALUE]", "visible"]

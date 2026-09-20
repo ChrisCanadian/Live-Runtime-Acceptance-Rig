@@ -78,6 +78,34 @@ class EvidenceBundle:
     def _safe(self, value: Any) -> Any:
         return self.redactor.redact_value(value) if self.public_safe else value
 
+    @classmethod
+    def _json_compatible(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {
+                str(key): cls._json_compatible(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [cls._json_compatible(item) for item in value]
+        if isinstance(value, (set, frozenset)):
+            converted = [cls._json_compatible(item) for item in value]
+            return sorted(
+                converted,
+                key=lambda item: json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+        raise TypeError(
+            f"evidence values must be JSON-compatible, got {type(value).__name__}"
+        )
+
     def _path(self, relative_path: str) -> Path:
         candidate = Path(relative_path)
         if candidate.is_absolute():
@@ -114,7 +142,7 @@ class EvidenceBundle:
 
     def write_json(self, relative_path: str, payload: Any) -> str:
         path = self._path(relative_path)
-        safe_payload = self._safe(payload)
+        safe_payload = self._json_compatible(self._safe(payload))
         text = (
             json.dumps(
                 safe_payload,

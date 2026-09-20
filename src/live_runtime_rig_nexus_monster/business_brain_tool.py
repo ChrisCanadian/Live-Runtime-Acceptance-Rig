@@ -87,14 +87,50 @@ class BusinessBrainAttributionTool:
             f"[BB TOOL] governed execution START | turn={context.turn_id} "
             f"proposal={context.provider_proposal_id or 'NONE'}"
         )
-        nexus_handoff, trace = resolve_attribution_for_nexus(
-            query,
-            moon_root=self.moon_root,
-            correlation_id=context.correlation_id,
-            nexus_turn_id=context.turn_id,
-            nexus_execution_id=execution_id,
-            progress=self._progress,
-        )
+        try:
+            nexus_handoff, trace = resolve_attribution_for_nexus(
+                query,
+                moon_root=self.moon_root,
+                correlation_id=context.correlation_id,
+                nexus_turn_id=context.turn_id,
+                nexus_execution_id=execution_id,
+                progress=self._progress,
+            )
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            error_type = type(exc).__name__
+            error_message = str(exc).strip()[:800]
+            _emit(
+                "[BB TOOL] governed execution FAILED | "
+                f"elapsed={elapsed_ms / 1000:.1f}s "
+                f"error={error_type} detail={error_message or '[no message]'}"
+            )
+            failure = {
+                "failure_stage": "business_brain_attribution",
+                "error_type": error_type,
+                "error_message": error_message,
+                "elapsed_ms": round(elapsed_ms, 3),
+            }
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            trace_path = self.artifact_dir / (
+                "BB_TOOL_FAILURE_" + execution_id.replace(":", "_").replace("/", "_") + ".json"
+            )
+            trace_path.write_text(
+                json.dumps(failure, indent=2, sort_keys=True, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            self._traces[context.turn_id] = {
+                "execution_id": execution_id,
+                "provider_proposal_id": context.provider_proposal_id,
+                "trace_path": str(trace_path),
+                "trace": {"failure": failure},
+                "nexus_handoff": {},
+            }
+            return self.tool_result_factory(
+                "FAILED",
+                failure,
+                error_code=f"BUSINESS_BRAIN_{error_type.upper()}",
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000
 
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +206,7 @@ def register_business_brain_tool(
                 "hzk_grant",
                 "moon_business_brain_handoff",
                 "provenance",
+                "provider_projection",
                 "transport",
             ],
             "properties": {
@@ -177,6 +214,7 @@ def register_business_brain_tool(
                 "hzk_grant": {"type": "object"},
                 "moon_business_brain_handoff": {"type": "object"},
                 "provenance": {"type": "object"},
+                "provider_projection": {"type": "object"},
                 "transport": {"type": "object"},
             },
             "additionalProperties": False,

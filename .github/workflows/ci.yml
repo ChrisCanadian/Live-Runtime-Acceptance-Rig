@@ -6,6 +6,7 @@ on:
       - main
       - integration/ndka-full-monster-20260918
       - test/ndka-full-monster-attribution-takt-20260920
+      - fix/attribution-provider-projection-20260920
   pull_request:
     branches:
       - main
