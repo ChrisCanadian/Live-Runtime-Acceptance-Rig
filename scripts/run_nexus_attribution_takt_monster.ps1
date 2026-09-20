@@ -12,10 +12,10 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "2de727f4b5a77f9f2d2acf39d3d04956d0b2be3a"
+$NDKA_SHA = "96489d74e404380dd5292d6701e59d42338592d6"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "3338a101acf3c9e334e9c194d00b0ea11fb60ea9"
-$BUSINESS_BRAIN_SHA = "81cc09f064e741a828a5e29fba0bcfee1487e4ea"
+$BUSINESS_BRAIN_SHA = "b349c26c9a34f3014ad2b14c883636d23f97aba9"
 $MOON_SOURCE_SHA = "f0cee0018e8cd8d0bfe2434956c8878e4c3cb44b"
 $HZK_SHA = "c93b481f2ccfcc5ab4bd74f0abd09a9375b577f6"
 
@@ -116,7 +116,7 @@ Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Magenta
 Write-Host " NEXUS SYNAPSE - ATTRIBUTION + TAKT FULL MONSTER RIG" -ForegroundColor Magenta
 Write-Host "======================================================================" -ForegroundColor Magenta
-Write-Host "Classification: ISOLATED USER18 / ATTRIBUTION COMPOSITION / TAKT OBSERVATION" -ForegroundColor Yellow
+Write-Host "Classification: ISOLATED USER18 / NEXUS-CONDUCTED ATTRIBUTION / TAKT OBSERVATION" -ForegroundColor Yellow
 Write-Host "Ingress:        CANONICAL /v1/chat/completions" -ForegroundColor Yellow
 Write-Host "Execution:      LOCAL DOCKER / LIVE TERMINAL STREAM / REAL LLM" -ForegroundColor Yellow
 Write-Host "Evidence mode:  $EvidenceMode" -ForegroundColor Yellow
@@ -132,7 +132,7 @@ Write-Host "Required controls never disappear behind SKIP." -ForegroundColor Yel
 Write-Host "This is local isolated-state evidence with REAL model inference, NOT deployed TEST acceptance." -ForegroundColor Yellow
 Write-Host "Fake provider fallback is forbidden in this lane." -ForegroundColor Yellow
 Write-Host "Timing policy: observer wall-clock + existing KernelReceipt.duration_ms only." -ForegroundColor Yellow
-Write-Host "External systems are timed only at our call boundary; no contract-invasive instrumentation." -ForegroundColor Yellow
+Write-Host "Provider stream telemetry is host-observed; public Nexus contracts remain unchanged." -ForegroundColor Yellow
 if (-not $PublicSafe) {
     Write-Host "Developer debug is enabled: local evidence may contain exception details and paths." -ForegroundColor Yellow
 }
@@ -323,8 +323,9 @@ $dockerArgs = @(
     "-e", "NEXUS_RIG_BUSINESS_BRAIN_DB_PATH=/run/state/business-brain-attribution.db",
     "-e", "NEXUS_RIG_HZK_CHECKOUT=/hzk",
     "-e", "NEXUS_RIG_HZK_TREATY_REQUIRED=1",
-    "-e", "NEXUS_RIG_ATTRIBUTION_DEADLINE_SECONDS=900",
-    "-e", "NEXUS_RIG_PROVIDER_DEADLINE_SECONDS=420",
+    "-e", "NEXUS_RIG_PROVIDER_DEADLINE_SECONDS=300",
+    "-e", "NEXUS_RIG_TOOL_DEADLINE_MS=300000",
+    "-e", "NEXUS_APIFREE_TIMEOUT_SECONDS=120",
     "-e", "PYTHONPATH=/rig/src:/ndka/src:/v5/src:/business-brain:/business-brain/src:/hzk/runtime",
     "-e", "NEXUS_APIFREE_API_KEY",
     "-e", "NEXUS_APIFREE_AVAILABILITY_REASON=",
@@ -332,7 +333,7 @@ $dockerArgs = @(
     "-e", "NEXUS_RIG_SECONDARY_USER_ID=19",
     "-e", "NEXUS_RIG_PRIMARY_OWNER_KEY=nexus",
     "-e", "NEXUS_RIG_SECONDARY_OWNER_KEY=nexus-secondary-acceptance",
-    "-e", "NEXUS_RIG_MONSTER_PERMISSIONS=memory:read,tools:document,artifacts:create,artifacts:read,jobs:create,jobs:read",
+    "-e", "NEXUS_RIG_MONSTER_PERMISSIONS=memory:read,tools:business_brain,tools:document,artifacts:create,artifacts:read,jobs:create,jobs:read",
     "-e", "NEXUS_DEPLOYMENT_ID=local-monster-$RunId",
     "-e", "NEXUS_RUNTIME_VERSION=ndka-monster-$NDKA_SHA",
     "-e", "NLP_ENABLED=true",
@@ -373,8 +374,9 @@ Write-Host "Evidence mode: $EvidenceMode" -ForegroundColor DarkGray
 Write-Host "Network:       BRIDGE (required for real provider)" -ForegroundColor DarkGray
 Write-Host "Provider:      $ProviderKind / REAL" -ForegroundColor DarkGray
 Write-Host "Ingress:       /v1/chat/completions" -ForegroundColor DarkGray
-Write-Host "Attribution:   Moon Source -> HZK Treaty v0.3 -> Business Brain -> canonical Nexus" -ForegroundColor DarkGray
-Write-Host "Deadline:      provider 420s hard / stage 10A 900s hard" -ForegroundColor DarkGray
+Write-Host "Attribution:   natural request -> Nexus -> governed Business Brain tool -> Nexus" -ForegroundColor DarkGray
+Write-Host "BB internals:  Moon Source -> HZK Treaty v0.3 -> disposable real Business Brain" -ForegroundColor DarkGray
+Write-Host "Provider bound: 300s cooperative stream cancel + 120s socket inactivity" -ForegroundColor DarkGray
 Write-Host ""
 
 & docker @dockerArgs
