@@ -10,7 +10,10 @@ prebuilt chain packet is supplied by the harness.
 from __future__ import annotations
 
 import json
+import sys
+import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Mapping
 
 
@@ -31,6 +34,54 @@ FORBIDDEN_ROUTING_BUMPERS = (
     "call business",
     "required_tool_id",
 )
+
+
+def _emit_live(message: str) -> None:
+    stream = getattr(sys, "__stdout__", None) or sys.stdout
+    stream.write(message.rstrip() + "\n")
+    stream.flush()
+
+
+@contextmanager
+def _observe_live_nexus_turn(runtime: Any, turn_id: str):
+    stop = threading.Event()
+    started = time.monotonic()
+    _emit_live("[10A] Nexus-conducted attribution turn START")
+
+    def heartbeat() -> None:
+        while not stop.wait(30):
+            rounds = list(runtime.provider_telemetry_for_turn(turn_id))
+            elapsed = time.monotonic() - started
+            if not rounds:
+                _emit_live(
+                    f"[10A] Nexus pre/provider routing alive... {elapsed:.0f}s | "
+                    "no provider round observed yet"
+                )
+                continue
+            current = rounds[-1]
+            chunks = int(current.get("stream_chunks_observed") or 0)
+            bytes_out = int(current.get("stream_bytes_observed") or 0)
+            phase = "streaming content" if chunks else "waiting for first visible output"
+            _emit_live(
+                f"[10A] Nexus alive... {elapsed:.0f}s | "
+                f"provider_round={current.get('round')} | {phase} | "
+                f"chunks={chunks} output={bytes_out}B"
+            )
+
+    thread = threading.Thread(
+        target=heartbeat,
+        name="monster-nexus-attribution-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        _emit_live(
+            f"[10A] Nexus-conducted attribution turn END | "
+            f"{time.monotonic() - started:.1f}s"
+        )
 
 
 def _receipt_trace(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -62,18 +113,19 @@ def run_attribution_chain(runtime: Any, *, marker: str) -> dict[str, Any]:
     session_id = f"monster-attribution-route:{marker}"
 
     started = time.perf_counter_ns()
-    response = runtime.request(
-        "POST",
-        "/v1/chat/completions",
-        principal="primary",
-        json={
-            "messages": [{"role": "user", "content": scenario}],
-            "session_id": session_id,
-            "request_id": turn_id,
-            "turn_id": turn_id,
-            "include_tools": True,
-        },
-    )
+    with _observe_live_nexus_turn(runtime, turn_id):
+        response = runtime.request(
+            "POST",
+            "/v1/chat/completions",
+            principal="primary",
+            json={
+                "messages": [{"role": "user", "content": scenario}],
+                "session_id": session_id,
+                "request_id": turn_id,
+                "turn_id": turn_id,
+                "include_tools": True,
+            },
+        )
     wall_ms = (time.perf_counter_ns() - started) / 1_000_000
     runtime.record_nexus_takt(
         "attribution.nexus_conducted_turn",
