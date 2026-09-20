@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -91,6 +92,17 @@ class Redactor:
             }
         if isinstance(value, (list, tuple)):
             return [self.redact_value(item) for item in value]
+        if isinstance(value, (set, frozenset)):
+            redacted = [self.redact_value(item) for item in value]
+            return sorted(
+                redacted,
+                key=lambda item: json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
         raise TypeError(
             f"evidence values must be JSON-compatible, got {type(value).__name__}"
         )
