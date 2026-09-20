@@ -12,11 +12,12 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "c83c60f5a64a97de9fba34cff3c9479a927e7a58"
+$NDKA_SHA = "1c097aae4bd9c33ab84b93d6ec941d093d387d4e"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
-$V5_SHA = "48932a94a58f24f54b2fbe81c9d400ddb32f82ed"
-$BUSINESS_BRAIN_SHA = "457f586a80d51799ba77004296961110a5f6088a"
+$V5_SHA = "c2751a7dff79b6b4d770624706b6ce3d9e51d67f"
+$BUSINESS_BRAIN_SHA = "caa137a718324332e0cb2c520560db5d1283d8d6"
 $MOON_SOURCE_SHA = "f0cee0018e8cd8d0bfe2434956c8878e4c3cb44b"
+$HZK_SHA = "c93b481f2ccfcc5ab4bd74f0abd09a9375b577f6"
 
 $RigRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $CacheRoot = Join-Path $RigRoot ".kernelized-local"
@@ -177,12 +178,14 @@ $ProductionRoot = Join-Path $RepoCache "nexus-synapse-runtime"
 $V5Root = Join-Path $RepoCache "nexus-v5-reconstruction"
 $BusinessBrainRoot = Join-Path $RepoCache "business-brain-attribution"
 $MoonSourceRoot = Join-Path $RepoCache "Moon-Source"
+$HzkRoot = Join-Path $RepoCache "memex-zettelkasten-hypercube"
 Ensure-ExactCheckout -Repository "ChrisCanadian/nexus-synapse-ndka" -Destination $NdkaRoot -Sha $NDKA_SHA
 Ensure-ExactCheckout -Repository "ChrisCanadian/nexus-synapse-runtime" -Destination $ProductionRoot -Sha $PRODUCTION_SHA
 Ensure-ExactCheckout -Repository "ChrisCanadian/nexus-v5-reconstruction" -Destination $V5Root -Sha $V5_SHA
 Ensure-ExactCheckout -Repository "ChrisCanadian/business-brain" -Destination $BusinessBrainRoot -Sha $BUSINESS_BRAIN_SHA
 Ensure-ExactCheckout -Repository "luahelenammc/Moon-Source" -Destination $MoonSourceRoot -Sha $MOON_SOURCE_SHA
-Write-Host "Attribution sources: VERIFIED and pinned" -ForegroundColor DarkGray
+Ensure-ExactCheckout -Repository "beckmanjon/memex-zettelkasten-hypercube" -Destination $HzkRoot -Sha $HZK_SHA
+Write-Host "Attribution sources + HZK treaty: VERIFIED and pinned" -ForegroundColor DarkGray
 
 $SnapshotAttribute = (git -C $NdkaRoot check-attr text -- "migration_staging/v5_snapshot/migrations/0001_core.sql").Trim()
 if ($SnapshotAttribute -notmatch "text: unset$") {
@@ -307,7 +310,7 @@ $dockerArgs = @(
     "--security-opt", "no-new-privileges:true",
     "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
     "-e", "NEXUS_RIG_PRODUCTION_CHECKOUT=/production",
-    "-e", "NEXUS_RIG_V5_CHECKOUT=STAGED",
+    "-e", "NEXUS_RIG_V5_CHECKOUT=/v5",
     "-e", "NEXUS_RIG_LEGACY_DB_PATH=/run/state/legacy.sqlite",
     "-e", "NEXUS_RIG_ARTIFACT_PATH=/run/artifacts",
     "-e", "NEXUS_RIG_RUNTIME_PROFILE=development_fixture",
@@ -317,7 +320,11 @@ $dockerArgs = @(
     "-e", "NEXUS_RIG_BUSINESS_BRAIN_CHECKOUT=/business-brain",
     "-e", "NEXUS_RIG_MOON_SOURCE_DIR=/moon-source",
     "-e", "NEXUS_RIG_BUSINESS_BRAIN_DB_PATH=/run/state/business-brain-attribution.db",
-    "-e", "PYTHONPATH=/rig/src:/ndka/src:/v5/src:/business-brain:/business-brain/src",
+    "-e", "NEXUS_RIG_HZK_CHECKOUT=/hzk",
+    "-e", "NEXUS_RIG_HZK_TREATY_REQUIRED=1",
+    "-e", "NEXUS_RIG_ATTRIBUTION_DEADLINE_SECONDS=900",
+    "-e", "NEXUS_RIG_PROVIDER_DEADLINE_SECONDS=420",
+    "-e", "PYTHONPATH=/rig/src:/ndka/src:/v5/src:/business-brain:/business-brain/src:/hzk/runtime",
     "-e", "NEXUS_APIFREE_API_KEY",
     "-e", "NEXUS_APIFREE_AVAILABILITY_REASON=",
     "-e", "NEXUS_RIG_PRIMARY_USER_ID=18",
@@ -342,8 +349,10 @@ $dockerArgs = @(
     "-e", "OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434",
     "--mount", "type=bind,source=$RigRoot,target=/rig,readonly",
     "--mount", "type=bind,source=$NdkaRoot,target=/ndka,readonly",
+    "--mount", "type=bind,source=$V5Root,target=/v5,readonly",
     "--mount", "type=bind,source=$BusinessBrainRoot,target=/business-brain,readonly",
     "--mount", "type=bind,source=$MoonSourceRoot,target=/moon-source,readonly",
+    "--mount", "type=bind,source=$HzkRoot,target=/hzk,readonly",
     "--mount", "type=bind,source=$ProductionRuntimeRoot,target=/production",
     "--mount", "type=bind,source=$RunRoot,target=/run",
     $ImageTag,
@@ -363,7 +372,8 @@ Write-Host "Evidence mode: $EvidenceMode" -ForegroundColor DarkGray
 Write-Host "Network:       BRIDGE (required for real provider)" -ForegroundColor DarkGray
 Write-Host "Provider:      $ProviderKind / REAL" -ForegroundColor DarkGray
 Write-Host "Ingress:       /v1/chat/completions" -ForegroundColor DarkGray
-Write-Host "Attribution:   Moon Source -> HZK -> Business Brain -> canonical Nexus" -ForegroundColor DarkGray
+Write-Host "Attribution:   Moon Source -> HZK Treaty v0.3 -> Business Brain -> canonical Nexus" -ForegroundColor DarkGray
+Write-Host "Deadline:      provider 420s hard / stage 10A 900s hard" -ForegroundColor DarkGray
 Write-Host ""
 
 & docker @dockerArgs
@@ -404,11 +414,19 @@ Write-Host "Production donor immutability: VERIFIED" -ForegroundColor DarkGray
 
 $BusinessBrainObserved = (git -C $BusinessBrainRoot rev-parse HEAD).Trim()
 $MoonSourceObserved = (git -C $MoonSourceRoot rev-parse HEAD).Trim()
+$HzkObserved = (git -C $HzkRoot rev-parse HEAD).Trim()
+$V5Observed = (git -C $V5Root rev-parse HEAD).Trim()
 if ($BusinessBrainObserved -ne $BUSINESS_BRAIN_SHA) {
     throw "Pinned Business Brain checkout moved during Monster execution."
 }
 if ($MoonSourceObserved -ne $MOON_SOURCE_SHA) {
     throw "Pinned Moon Source checkout moved during Monster execution."
+}
+if ($HzkObserved -ne $HZK_SHA) {
+    throw "Pinned HZK treaty checkout moved during Monster execution."
+}
+if ($V5Observed -ne $V5_SHA) {
+    throw "Pinned V5 acceptance checkout moved during Monster execution."
 }
 if (@(git -C $BusinessBrainRoot status --porcelain).Count -ne 0) {
     throw "Pinned Business Brain checkout was modified during Monster execution."
@@ -416,7 +434,13 @@ if (@(git -C $BusinessBrainRoot status --porcelain).Count -ne 0) {
 if (@(git -C $MoonSourceRoot status --porcelain).Count -ne 0) {
     throw "Pinned Moon Source checkout was modified during Monster execution."
 }
-Write-Host "Attribution source immutability: VERIFIED" -ForegroundColor DarkGray
+if (@(git -C $HzkRoot status --porcelain).Count -ne 0) {
+    throw "Pinned HZK treaty checkout was modified during Monster execution."
+}
+if (@(git -C $V5Root status --porcelain).Count -ne 0) {
+    throw "Pinned V5 acceptance checkout was modified during Monster execution."
+}
+Write-Host "Attribution / HZK / V5 source immutability: VERIFIED" -ForegroundColor DarkGray
 
 $TaktMarkdown = Join-Path $ArtifactRoot "TAKT_TIMINGS.md"
 $TaktJson = Join-Path $ArtifactRoot "takt-timings.json"
