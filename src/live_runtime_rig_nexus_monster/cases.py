@@ -538,6 +538,170 @@ class FaultInjectionCase:
         )
 
 
+
+class AttributionKnowledgeChainCase:
+    planned_checks = (
+        "Moon Source independently recovers the required attribution/source-governance families",
+        "HZK independently verifies the selected knowledge packet",
+        "HZK state remains unchanged and authority remains reference-only",
+        "Historical/compatibility distinctions survive HZK admission",
+        "Business Brain stores the resolution only as draft_memory",
+        "Business Brain source remains immutable with complete readback",
+        "Nested Moon -> HZK -> Business Brain provenance is exact",
+        "Business Brain integrity verification passes",
+        "Kernelized Nexus releases the packet-only final synthesis",
+        "Final synthesis keeps Moon Source, HZK, Business Brain, and Nexus distinct",
+        "Final synthesis rejects topology-implies-lineage and influence-implies-coauthorship",
+        "Original attribution incident is not supplied to final Nexus synthesis",
+    )
+    name = "monster-attribution-knowledge-chain"
+    suite = "10A ATTRIBUTION / KNOWLEDGE CHAIN"
+
+    def run(self, runtime, database, context) -> CaseResult:
+        del database
+        from live_runtime_rig_nexus_monster.attribution_chain import run_attribution_chain
+
+        result = run_attribution_chain(runtime, marker=context.marker)
+        moon_score = dict(result.get("moon_score") or {})
+        hzk = dict(result.get("hzk") or {})
+        bb = dict(result.get("business_brain") or {})
+        nexus = dict(result.get("nexus") or {})
+        checks = [
+            _check(
+                "Moon Source independently recovers the required attribution/source-governance families",
+                moon_score.get("status") == "PASS",
+                "PASS",
+                {
+                    "status": moon_score.get("status"),
+                    "groups_hit": moon_score.get("groups_hit"),
+                    "groups_total": moon_score.get("groups_total"),
+                },
+            ),
+            _check(
+                "HZK independently verifies the selected knowledge packet",
+                hzk.get("status") == "PASS"
+                and hzk.get("constitutional_status") == "PASS",
+                {"status": "PASS", "constitutional_status": "PASS"},
+                {
+                    "status": hzk.get("status"),
+                    "constitutional_status": hzk.get("constitutional_status"),
+                },
+            ),
+            _check(
+                "HZK state remains unchanged and authority remains reference-only",
+                hzk.get("state_unchanged") is True
+                and hzk.get("authority_clean") is True,
+                {"state_unchanged": True, "authority_clean": True},
+                {
+                    "state_unchanged": hzk.get("state_unchanged"),
+                    "authority_clean": hzk.get("authority_clean"),
+                },
+            ),
+            _check(
+                "Historical/compatibility distinctions survive HZK admission",
+                hzk.get("historical_distinction_preserved") is True,
+                True,
+                hzk.get("historical_distinction_preserved"),
+            ),
+            _check(
+                "Business Brain stores the resolution only as draft_memory",
+                (bb.get("status") or {}).get("state") == "draft_memory",
+                "draft_memory",
+                (bb.get("status") or {}).get("state"),
+            ),
+            _check(
+                "Business Brain source remains immutable with complete readback",
+                bb.get("source_immutable") is True
+                and bb.get("readback_complete") is True,
+                {"source_immutable": True, "readback_complete": True},
+                {
+                    "source_immutable": bb.get("source_immutable"),
+                    "readback_complete": bb.get("readback_complete"),
+                },
+            ),
+            _check(
+                "Nested Moon -> HZK -> Business Brain provenance is exact",
+                result.get("nested_provenance") is True,
+                True,
+                result.get("nested_provenance"),
+            ),
+            _check(
+                "Business Brain integrity verification passes",
+                (bb.get("integrity") or {}).get("status") == "ok",
+                "ok",
+                (bb.get("integrity") or {}).get("status"),
+            ),
+            _check(
+                "Kernelized Nexus releases the packet-only final synthesis",
+                nexus.get("status_code") == 200
+                and nexus.get("body_state") == "released"
+                and (nexus.get("parsed") or {}).get("status") == "PASS",
+                {"status_code": 200, "body_state": "released", "parsed.status": "PASS"},
+                {
+                    "status_code": nexus.get("status_code"),
+                    "body_state": nexus.get("body_state"),
+                    "parsed_status": (nexus.get("parsed") or {}).get("status"),
+                    "parse_error": nexus.get("parse_error"),
+                },
+            ),
+            _check(
+                "Final synthesis keeps Moon Source, HZK, Business Brain, and Nexus distinct",
+                nexus.get("authority_distinct") is True,
+                True,
+                nexus.get("authority_distinct"),
+            ),
+            _check(
+                "Final synthesis rejects topology-implies-lineage and influence-implies-coauthorship",
+                nexus.get("topology_lineage_rejected") is True
+                and nexus.get("influence_coauthorship_rejected") is True,
+                {
+                    "topology_lineage_rejected": True,
+                    "influence_coauthorship_rejected": True,
+                },
+                {
+                    "topology_lineage_rejected": nexus.get("topology_lineage_rejected"),
+                    "influence_coauthorship_rejected": nexus.get("influence_coauthorship_rejected"),
+                },
+            ),
+            _check(
+                "Original attribution incident is not supplied to final Nexus synthesis",
+                result.get("final_input_contains_original_incident") is False,
+                False,
+                result.get("final_input_contains_original_incident"),
+            ),
+        ]
+        return CaseResult(
+            checks=checks,
+            evidence={
+                "moon_score": moon_score,
+                "selected_moon_sources": [
+                    item.get("path")
+                    for item in (result.get("moon_result") or {}).get("selected_sources", [])
+                    if isinstance(item, Mapping)
+                ],
+                "hzk": {
+                    key: hzk.get(key)
+                    for key in (
+                        "source_revision",
+                        "packet_id",
+                        "constitutional_status",
+                        "state_unchanged",
+                        "authority_clean",
+                        "historical_distinction_preserved",
+                    )
+                },
+                "business_brain": {
+                    "artifact_id": (bb.get("status") or {}).get("artifact_id"),
+                    "artifact_version": (bb.get("status") or {}).get("artifact_version"),
+                    "state": (bb.get("status") or {}).get("state"),
+                    "integrity": (bb.get("integrity") or {}).get("status"),
+                },
+                "nexus": nexus,
+                "timings_ms": result.get("timings_ms"),
+            },
+        )
+
+
 class ReceiptCoverageGateCase:
     planned_checks = (
         "All 17 required kernels emitted campaign evidence at an appropriate boundary",
@@ -650,6 +814,7 @@ def register_cases(_config: Any):
         CognitionModesLearningCase(),
         JobsArtifactsCase(),
         FaultInjectionCase(),
+        AttributionKnowledgeChainCase(),
         ReceiptCoverageGateCase(),
         MonsterTaktCase(),
     ]
