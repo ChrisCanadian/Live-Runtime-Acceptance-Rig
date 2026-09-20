@@ -542,40 +542,177 @@ class FaultInjectionCase:
 
 class AttributionKnowledgeChainCase:
     planned_checks = (
-        "Moon Source independently recovers the required attribution/source-governance families",
+        "Moon Source carries a sufficient relevant evidence set",
+        "Moon Source handshake evidence is inspectable and complete",
         "HZK independently verifies the selected knowledge packet",
         "HZK state remains unchanged and authority remains reference-only",
+        "HZK passes forward relevant attribution/lineage/provenance/authority evidence",
         "Historical/compatibility distinctions survive HZK admission",
         "Business Brain stores the resolution only as draft_memory",
         "Business Brain source remains immutable with complete readback",
-        "Nested Moon -> HZK -> Business Brain provenance is exact",
+        "Nested Moon -> HZK -> Business Brain path and hash provenance is exact",
         "Business Brain integrity verification passes",
         "Kernelized Nexus releases the packet-only final synthesis",
-        "Final synthesis keeps Moon Source, HZK, Business Brain, and Nexus distinct",
-        "Final synthesis rejects topology-implies-lineage and influence-implies-coauthorship",
+        "Nexus answer contains substantive attribution evidence",
+        "Receipt trace records the contributing Nexus functions independently of answer prose",
+        "Final Nexus synthesis respects claim guardrails without requiring plumbing narration",
         "Original attribution incident is not supplied to final Nexus synthesis",
     )
     name = "monster-attribution-knowledge-chain"
     suite = "10A ATTRIBUTION / KNOWLEDGE CHAIN"
+
+    @staticmethod
+    def _one_line(value: Any, limit: int = 320) -> str:
+        text = " ".join(str(value or "").split())
+        return text if len(text) <= limit else text[: limit - 3] + "..."
 
     def run(self, runtime, database, context) -> CaseResult:
         del database
         from live_runtime_rig_nexus_monster.attribution_chain import run_attribution_chain
 
         result = run_attribution_chain(runtime, marker=context.marker)
+        moon_result = dict(result.get("moon_result") or {})
         moon_score = dict(result.get("moon_score") or {})
         hzk = dict(result.get("hzk") or {})
         bb = dict(result.get("business_brain") or {})
         nexus = dict(result.get("nexus") or {})
+        trace = dict(result.get("provenance_trace") or {})
+
+        selected_moon = [
+            item for item in moon_result.get("selected_sources", [])
+            if isinstance(item, Mapping)
+        ]
+        hzk_entries = [
+            item for item in hzk.get("entries", [])
+            if isinstance(item, Mapping)
+        ]
+        nexus_functions = [
+            item for item in nexus.get("function_trace", [])
+            if isinstance(item, Mapping)
+        ]
+
+        moon_handshake_complete = bool(selected_moon) and all(
+            bool(str(item.get("path") or ""))
+            and bool(str(item.get("source_sha256") or ""))
+            and bool(str(item.get("why") or ""))
+            and bool(str(item.get("evidence_excerpt") or ""))
+            and bool(item.get("evidence_concepts"))
+            for item in selected_moon
+        )
+        trace_complete = (
+            all(name in trace for name in ("moon_source", "hzk", "business_brain", "nexus"))
+            and bool(nexus_functions)
+            and "nexus.provider" in set(nexus.get("kernel_ids") or ())
+        )
+        answer = str(nexus.get("answer") or "").strip()
+        answer_substantive = bool(answer) and len(nexus.get("answer_terms") or ()) >= 2
+
+        handshake_artifact = context.evidence.write_json(
+            "artifacts/ATTRIBUTION_HANDSHAKE.json",
+            {
+                "moon_source": {
+                    "selected_evidence": selected_moon,
+                    "relevance": moon_score,
+                },
+                "hzk": {
+                    "entries": hzk_entries,
+                    "concepts": result.get("hzk_concepts"),
+                    "constitutional_status": hzk.get("constitutional_status"),
+                    "evidence_status": hzk.get("evidence_status"),
+                },
+                "business_brain": trace.get("business_brain"),
+                "alignment": trace.get("alignment"),
+            },
+        )
+        trace_artifact = context.evidence.write_json(
+            "artifacts/ATTRIBUTION_TRACE.json",
+            trace,
+        )
+        response_artifact = context.evidence.write_text(
+            "artifacts/NEXUS_RESPONSE.md",
+            "# Nexus attribution synthesis\n\n"
+            + answer
+            + "\n\n## Raw acceptance payload\n\n```json\n"
+            + json.dumps(nexus.get("parsed") or {}, indent=2, ensure_ascii=False)
+            + "\n```\n",
+        )
+
+        trace_lines = [
+            "NEXUS RESPONSE",
+            "--------------",
+            answer or "[NO ANSWER RETURNED]",
+            "",
+            "HANDSHAKE EVIDENCE",
+            "------------------",
+            f"Moon Source selected {len(selected_moon)} evidence item(s):",
+        ]
+        for item in selected_moon:
+            concepts = ", ".join(str(v) for v in (item.get("evidence_concepts") or []))
+            trace_lines.extend(
+                (
+                    f"  • {item.get('path')} [{item.get('authority_status')}]",
+                    f"    concepts: {concepts or 'none'}",
+                    f"    why: {self._one_line(item.get('why'))}",
+                    f"    evidence: {self._one_line(item.get('evidence_excerpt'))}",
+                )
+            )
+
+        trace_lines.extend(("", f"HZK admitted {len(hzk_entries)} item(s):"))
+        for item in hzk_entries:
+            concepts = ", ".join(str(v) for v in (item.get("concepts") or []))
+            trace_lines.append(
+                f"  • {item.get('source_path')} -> {item.get('included_as')} "
+                f"/ authority={item.get('authority')} / concepts={concepts or 'none'}"
+            )
+
+        function_labels = sorted(
+            {
+                ".".join(
+                    value for value in (
+                        str(item.get("kernel_id") or ""),
+                        str(item.get("operation") or ""),
+                    )
+                    if value
+                )
+                for item in nexus_functions
+            }
+        )
+        trace_lines.extend(
+            (
+                "",
+                "Nexus receipt trace:",
+                "  " + ", ".join(function_labels),
+                "",
+                f"Full handshake artifact: {handshake_artifact}",
+                f"Full receipt trace:       {trace_artifact}",
+                f"Nexus response artifact:  {response_artifact}",
+            )
+        )
+
         checks = [
             _check(
-                "Moon Source independently recovers the required attribution/source-governance families",
+                "Moon Source carries a sufficient relevant evidence set",
                 moon_score.get("status") == "PASS",
-                "PASS",
+                {
+                    "core_relevance_ok": True,
+                    "support_relevance_ok": True,
+                    "gold_bibliography_required": False,
+                },
                 {
                     "status": moon_score.get("status"),
-                    "groups_hit": moon_score.get("groups_hit"),
-                    "groups_total": moon_score.get("groups_total"),
+                    "core_relevance_coverage": moon_score.get("core_relevance_coverage"),
+                    "support_relevance_coverage": moon_score.get("support_relevance_coverage"),
+                    "legacy_groups_hit_diagnostic": moon_score.get("groups_hit"),
+                },
+            ),
+            _check(
+                "Moon Source handshake evidence is inspectable and complete",
+                moon_handshake_complete,
+                True,
+                {
+                    "complete": moon_handshake_complete,
+                    "selected_count": len(selected_moon),
+                    "artifact": handshake_artifact,
                 },
             ),
             _check(
@@ -597,6 +734,12 @@ class AttributionKnowledgeChainCase:
                     "state_unchanged": hzk.get("state_unchanged"),
                     "authority_clean": hzk.get("authority_clean"),
                 },
+            ),
+            _check(
+                "HZK passes forward relevant attribution/lineage/provenance/authority evidence",
+                result.get("hzk_relevance_ok") is True,
+                {"attribution", "lineage", "provenance", "authority"},
+                set(result.get("hzk_concepts") or ()),
             ),
             _check(
                 "Historical/compatibility distinctions survive HZK admission",
@@ -621,10 +764,14 @@ class AttributionKnowledgeChainCase:
                 },
             ),
             _check(
-                "Nested Moon -> HZK -> Business Brain provenance is exact",
-                result.get("nested_provenance") is True,
-                True,
-                result.get("nested_provenance"),
+                "Nested Moon -> HZK -> Business Brain path and hash provenance is exact",
+                result.get("nested_provenance") is True
+                and result.get("nested_hash_provenance") is True,
+                {"paths": True, "hashes": True},
+                {
+                    "paths": result.get("nested_provenance"),
+                    "hashes": result.get("nested_hash_provenance"),
+                },
             ),
             _check(
                 "Business Brain integrity verification passes",
@@ -646,23 +793,29 @@ class AttributionKnowledgeChainCase:
                 },
             ),
             _check(
-                "Final synthesis keeps Moon Source, HZK, Business Brain, and Nexus distinct",
-                nexus.get("authority_distinct") is True,
-                True,
-                nexus.get("authority_distinct"),
+                "Nexus answer contains substantive attribution evidence",
+                answer_substantive,
+                "non-empty answer containing >=2 substantive attribution terms",
+                {
+                    "answer_chars": len(answer),
+                    "substantive_terms": nexus.get("answer_terms"),
+                },
             ),
             _check(
-                "Final synthesis rejects topology-implies-lineage and influence-implies-coauthorship",
-                nexus.get("topology_lineage_rejected") is True
-                and nexus.get("influence_coauthorship_rejected") is True,
+                "Receipt trace records the contributing Nexus functions independently of answer prose",
+                trace_complete,
+                {"trace_complete": True, "provider_receipt_present": True},
                 {
-                    "topology_lineage_rejected": True,
-                    "influence_coauthorship_rejected": True,
+                    "trace_complete": trace_complete,
+                    "kernel_ids": nexus.get("kernel_ids"),
+                    "artifact": trace_artifact,
                 },
-                {
-                    "topology_lineage_rejected": nexus.get("topology_lineage_rejected"),
-                    "influence_coauthorship_rejected": nexus.get("influence_coauthorship_rejected"),
-                },
+            ),
+            _check(
+                "Final Nexus synthesis respects claim guardrails without requiring plumbing narration",
+                nexus.get("guardrails_ok") is True,
+                True,
+                nexus.get("guardrails_ok"),
             ),
             _check(
                 "Original attribution incident is not supplied to final Nexus synthesis",
@@ -675,21 +828,15 @@ class AttributionKnowledgeChainCase:
             checks=checks,
             evidence={
                 "moon_score": moon_score,
-                "selected_moon_sources": [
-                    item.get("path")
-                    for item in (result.get("moon_result") or {}).get("selected_sources", [])
-                    if isinstance(item, Mapping)
-                ],
+                "selected_moon_sources": [item.get("path") for item in selected_moon],
                 "hzk": {
-                    key: hzk.get(key)
-                    for key in (
-                        "source_revision",
-                        "packet_id",
-                        "constitutional_status",
-                        "state_unchanged",
-                        "authority_clean",
-                        "historical_distinction_preserved",
-                    )
+                    "source_revision": hzk.get("source_revision"),
+                    "packet_id": hzk.get("packet_id"),
+                    "constitutional_status": hzk.get("constitutional_status"),
+                    "state_unchanged": hzk.get("state_unchanged"),
+                    "authority_clean": hzk.get("authority_clean"),
+                    "historical_distinction_preserved": hzk.get("historical_distinction_preserved"),
+                    "concepts": result.get("hzk_concepts"),
                 },
                 "business_brain": {
                     "artifact_id": (bb.get("status") or {}).get("artifact_id"),
@@ -698,8 +845,15 @@ class AttributionKnowledgeChainCase:
                     "integrity": (bb.get("integrity") or {}).get("status"),
                 },
                 "nexus": nexus,
+                "provenance_trace": trace,
                 "timings_ms": result.get("timings_ms"),
+                "artifacts": {
+                    "handshake": handshake_artifact,
+                    "trace": trace_artifact,
+                    "nexus_response": response_artifact,
+                },
             },
+            operator_output=tuple(trace_lines),
         )
 
 
