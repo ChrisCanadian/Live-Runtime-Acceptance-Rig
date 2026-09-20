@@ -543,356 +543,455 @@ class FaultInjectionCase:
 
 class AttributionKnowledgeChainCase:
     planned_checks = (
-        "Moon Source carries a sufficient relevant evidence set",
-        "Moon Source handshake evidence is inspectable and complete",
-        "HZK independently verifies the selected knowledge packet",
-        "HZK state remains unchanged and authority remains reference-only",
-        "HZK passes forward relevant attribution/lineage/provenance/authority evidence",
-        "HZK exports a treaty v0.3 Council grant with no mutation authority",
-        "Historical/compatibility distinctions survive HZK admission",
-        "Business Brain stores the resolution only as draft_memory",
-        "Business Brain source remains immutable with complete readback",
-        "Nested Moon -> HZK -> Business Brain path and hash provenance is exact",
+        "Attribution stimulus contains no hidden routing bumper",
+        "Initial Nexus provider round exposes multiple legitimate read-only choices",
+        "Nexus independently proposes the Business Brain attribution tool",
+        "Governed nexus.tools executes Business Brain exactly once",
+        "Business Brain returns a passing bounded resolution",
+        "Business Brain result excludes raw HZK treaty payload from model context",
+        "Moon Source selects sufficient relevant governed evidence",
+        "Moon Source evidence remains attributable by path and source hash",
+        "HZK verifies the selected evidence without state or authority transfer",
+        "HZK treaty v0.3 return receipt validates against exact grant and payload",
+        "Historical and compatibility distinctions survive the governed workflow",
+        "Business Brain keeps the resolution at draft_memory with immutable source",
         "Business Brain integrity verification passes",
-        "Kernelized Nexus releases the packet-only final synthesis",
-        "Nexus answer contains substantive attribution evidence",
-        "Receipt trace records the contributing Nexus functions independently of answer prose",
-        "HZK validates Nexus return receipt against exact treaty grant and payload",
-        "Final Nexus synthesis respects claim guardrails without requiring plumbing narration",
-        "Original attribution incident is not supplied to final Nexus synthesis",
+        "Kernelized Nexus releases the final answer after the tool round",
+        "Final Nexus answer contains substantive attribution resolution",
+        "Nexus receipt chain includes tools provider evidence correction and release",
+        "Provider telemetry proves a second inference round consumed tool results",
+        "Completed Nexus provider rounds expose token and latency telemetry",
+        "Full Business Brain handshake evidence remains inspectable outside model context",
     )
     name = "monster-attribution-knowledge-chain"
     suite = "10A ATTRIBUTION / KNOWLEDGE CHAIN"
-
-    @staticmethod
-    def _one_line(value: Any, limit: int = 320) -> str:
-        text = " ".join(str(value or "").split())
-        return text if len(text) <= limit else text[: limit - 3] + "..."
 
     def run(self, runtime, database, context) -> CaseResult:
         del database
         from live_runtime_rig_nexus_monster.attribution_chain import run_attribution_chain
 
         result = run_attribution_chain(runtime, marker=context.marker)
-        moon_result = dict(result.get("moon_result") or {})
-        moon_score = dict(result.get("moon_score") or {})
-        hzk = dict(result.get("hzk") or {})
-        hzk_treaty_return = dict(result.get("hzk_treaty_return") or {})
-        bb = dict(result.get("business_brain") or {})
-        nexus = dict(result.get("nexus") or {})
-        trace = dict(result.get("provenance_trace") or {})
+        body = dict(result.get("body") or {})
+        final_text = str(result.get("final_text") or "").strip()
+        tool_executions = [
+            item for item in (result.get("tool_executions") or [])
+            if isinstance(item, Mapping)
+        ]
+        bb_executions = [
+            item for item in (result.get("business_brain_executions") or [])
+            if isinstance(item, Mapping)
+        ]
+        bounded = dict(result.get("bounded_result") or {})
+        bb_trace_wrapper = result.get("business_brain_trace")
+        bb_trace_wrapper = (
+            dict(bb_trace_wrapper)
+            if isinstance(bb_trace_wrapper, Mapping)
+            else {}
+        )
+        full_trace = (
+            dict(bb_trace_wrapper.get("trace") or {})
+            if isinstance(bb_trace_wrapper.get("trace"), Mapping)
+            else {}
+        )
+        moon = dict(full_trace.get("moon_source") or {})
+        moon_result = dict(moon.get("result") or {})
+        moon_score = dict(moon.get("score") or {})
+        hzk = dict(full_trace.get("hzk") or {})
+        bb = dict(full_trace.get("business_brain") or {})
+        treaty_return = dict(full_trace.get("nexus_return_validation") or {})
+        provider_telemetry = [
+            item for item in (result.get("provider_telemetry") or [])
+            if isinstance(item, Mapping)
+        ]
+        receipts = [
+            item for item in (result.get("receipts") or [])
+            if isinstance(item, Mapping)
+        ]
 
-        selected_moon = [
-            item for item in moon_result.get("selected_sources", [])
+        selected_sources = [
+            item for item in (bounded.get("sources") or [])
             if isinstance(item, Mapping)
         ]
-        hzk_entries = [
-            item for item in hzk.get("entries", [])
-            if isinstance(item, Mapping)
-        ]
-        nexus_functions = [
-            item for item in nexus.get("function_trace", [])
-            if isinstance(item, Mapping)
-        ]
-
-        moon_handshake_complete = bool(selected_moon) and all(
+        source_identity_ok = bool(selected_sources) and all(
             bool(str(item.get("path") or ""))
-            and bool(str(item.get("source_sha256") or ""))
-            and bool(str(item.get("why") or ""))
-            and bool(str(item.get("evidence_excerpt") or ""))
-            and bool(item.get("evidence_concepts"))
-            for item in selected_moon
+            and len(str(item.get("source_sha256") or "")) == 64
+            for item in selected_sources
         )
-        trace_complete = (
-            all(name in trace for name in ("moon_source", "hzk", "business_brain", "nexus"))
-            and bool(nexus_functions)
-            and "nexus.provider" in set(nexus.get("kernel_ids") or ())
+
+        first_round = provider_telemetry[0] if provider_telemetry else {}
+        final_round = provider_telemetry[-1] if provider_telemetry else {}
+        initial_tools = set(first_round.get("available_tools") or ())
+        multiple_choices = (
+            "business_brain.resolve_attribution" in initial_tools
+            and "memory.retrieve" in initial_tools
+            and len(initial_tools) >= 2
+            and int(first_round.get("tool_result_count") or 0) == 0
         )
-        answer = str(nexus.get("answer") or "").strip()
-        answer_substantive = bool(answer) and len(nexus.get("answer_terms") or ()) >= 2
+
+        bb_execution = bb_executions[0] if len(bb_executions) == 1 else {}
+        model_selected_bb = (
+            len(bb_executions) == 1
+            and bool(str(bb_execution.get("provider_proposal_id") or ""))
+        )
+        bb_executed = (
+            len(bb_executions) == 1
+            and str(bb_execution.get("status") or "") == "SUCCEEDED"
+        )
+
+        receipt_ids = {str(item.get("kernel_id") or "") for item in receipts}
+        receipt_chain_ok = {
+            "nexus.tools",
+            "nexus.provider",
+            "nexus.evidence",
+            "nexus.correction",
+            "nexus.release",
+        } <= receipt_ids
+
+        second_round_ok = (
+            len(provider_telemetry) >= 2
+            and int(first_round.get("tool_result_count") or 0) == 0
+            and int(final_round.get("tool_result_count") or 0) >= 1
+        )
+        completed_rounds = [
+            item for item in provider_telemetry if item.get("completed") is True
+        ]
+        telemetry_complete = bool(completed_rounds) and all(
+            isinstance(item.get("input_token_count"), int)
+            and isinstance(item.get("output_token_count"), int)
+            and isinstance(item.get("first_token_latency_ms"), int)
+            and isinstance(item.get("total_latency_ms"), int)
+            and int(item.get("provider_chunk_count") or 0) > 0
+            for item in completed_rounds
+        )
+
+        substantive_terms = {
+            term for term in (
+                "attribution",
+                "lineage",
+                "authorship",
+                "coauthor",
+                "historical",
+                "provenance",
+                "evidence",
+                "source",
+            )
+            if term in final_text.casefold()
+        }
 
         handshake_artifact = context.evidence.write_json(
             "artifacts/ATTRIBUTION_HANDSHAKE.json",
-            {
-                "moon_source": {
-                    "selected_evidence": selected_moon,
-                    "relevance": moon_score,
-                },
-                "hzk": {
-                    "entries": hzk_entries,
-                    "concepts": result.get("hzk_concepts"),
-                    "constitutional_status": hzk.get("constitutional_status"),
-                    "evidence_status": hzk.get("evidence_status"),
-                },
-                "business_brain": trace.get("business_brain"),
-                "alignment": trace.get("alignment"),
-            },
+            full_trace,
         )
         trace_artifact = context.evidence.write_json(
             "artifacts/ATTRIBUTION_TRACE.json",
-            trace,
+            {
+                "turn_id": result.get("turn_id"),
+                "scenario": result.get("scenario"),
+                "routing_bumpers": result.get("routing_bumpers"),
+                "tool_executions": tool_executions,
+                "provider_telemetry": provider_telemetry,
+                "receipts": receipts,
+                "bounded_result": bounded,
+                "business_brain_trace_path": bb_trace_wrapper.get("trace_path"),
+            },
+        )
+        telemetry_artifact = context.evidence.write_json(
+            "artifacts/NEXUS_PROVIDER_TELEMETRY.json",
+            {"turn_id": result.get("turn_id"), "rounds": provider_telemetry},
         )
         response_artifact = context.evidence.write_text(
             "artifacts/NEXUS_RESPONSE.md",
-            "# Nexus attribution synthesis\n\n"
-            + answer
-            + "\n\n## Raw acceptance payload\n\n```json\n"
-            + json.dumps(nexus.get("parsed") or {}, indent=2, ensure_ascii=False)
+            "# Nexus attribution response\n\n"
+            + (final_text or "[NO RELEASED RESPONSE]")
+            + "\n\n## Canonical runtime payload\n\n```json\n"
+            + json.dumps(body, indent=2, ensure_ascii=False)
             + "\n```\n",
         )
 
+        transport = dict(bounded.get("transport") or {})
         trace_lines = [
-            "NEXUS RESPONSE",
-            "--------------",
-            answer or "[NO ANSWER RETURNED]",
+            "NEXUS ACTUAL RESPONSE",
+            "---------------------",
+            final_text or "[NO RELEASED RESPONSE]",
             "",
-            "HANDSHAKE EVIDENCE",
-            "------------------",
-            f"Moon Source selected {len(selected_moon)} evidence item(s):",
+            "ROUTING PROOF",
+            "-------------",
+            f"Natural stimulus bytes: {result.get('scenario_bytes')}",
+            f"Hidden routing bumpers: {list(result.get('routing_bumpers') or ())}",
+            "Initial visible read-only tools: " + ", ".join(sorted(initial_tools)),
+            f"Business Brain executions: {len(bb_executions)}",
+            f"Provider proposal id: {bb_execution.get('provider_proposal_id')}",
+            f"Execution status: {bb_execution.get('status')}",
+            "",
+            "BUSINESS BRAIN BOUNDARY",
+            "-----------------------",
+            f"Selected Moon sources: {len(selected_sources)}",
+            f"Raw HZK payload: {transport.get('hzk_payload_bytes')} bytes",
+            f"HZK treaty wire: {transport.get('hzk_grant_wire_bytes')} bytes",
+            f"Bounded result returned to Nexus: {transport.get('bounded_result_bytes')} bytes",
+            f"Raw treaty leaked to model result: {result.get('bounded_result_leaks_raw_hzk')}",
+            f"HZK treaty return validation: {treaty_return.get('status')}",
+            f"Business Brain state: {(bounded.get('business_brain') or {}).get('state')}",
+            "",
+            "NEXUS PROVIDER ROUNDS",
+            "---------------------",
         ]
-        for item in selected_moon:
-            concepts = ", ".join(str(v) for v in (item.get("evidence_concepts") or []))
-            trace_lines.extend(
-                (
-                    f"  • {item.get('path')} [{item.get('authority_status')}]",
-                    f"    concepts: {concepts or 'none'}",
-                    f"    why: {self._one_line(item.get('why'))}",
-                    f"    evidence: {self._one_line(item.get('evidence_excerpt'))}",
-                )
-            )
-
-        trace_lines.extend((
-            "",
-            f"HZK admitted {len(hzk_entries)} item(s):",
-            f"  treaty: {hzk.get('treaty_version')} / "
-            f"{(hzk.get('treaty_grant') or {}).get('handoff_profile') if isinstance(hzk.get('treaty_grant'), Mapping) else None} / "
-            f"mutation={(hzk.get('treaty_grant') or {}).get('mutation_contract') if isinstance(hzk.get('treaty_grant'), Mapping) else None}",
-        ))
-        for item in hzk_entries:
-            concepts = ", ".join(str(v) for v in (item.get("concepts") or []))
+        for item in provider_telemetry:
             trace_lines.append(
-                f"  • {item.get('source_path')} -> {item.get('included_as')} "
-                f"/ authority={item.get('authority')} / concepts={concepts or 'none'}"
-            )
-
-        function_labels = sorted(
-            {
-                ".".join(
-                    value for value in (
-                        str(item.get("kernel_id") or ""),
-                        str(item.get("operation") or ""),
+                "  round {round}: system={system_bytes}B user={user_bytes}B "
+                "tool_results={tool_result_count}/{tool_result_bytes}B "
+                "input_tokens={input_token_count} output_tokens={output_token_count} "
+                "first_token={first_token_latency_ms}ms total={total_latency_ms}ms "
+                "chunks={provider_chunk_count}".format(**{
+                    key: item.get(key)
+                    for key in (
+                        "round",
+                        "system_bytes",
+                        "user_bytes",
+                        "tool_result_count",
+                        "tool_result_bytes",
+                        "input_token_count",
+                        "output_token_count",
+                        "first_token_latency_ms",
+                        "total_latency_ms",
+                        "provider_chunk_count",
                     )
-                    if value
-                )
-                for item in nexus_functions
-            }
-        )
+                })
+            )
         trace_lines.extend(
             (
                 "",
-                f"HZK return receipt validation: {hzk_treaty_return.get('status')}",
-                "",
-                "Nexus receipt trace:",
-                "  " + ", ".join(function_labels),
-                "",
-                f"Full handshake artifact: {handshake_artifact}",
-                f"Full receipt trace:       {trace_artifact}",
-                f"Nexus response artifact:  {response_artifact}",
+                f"Handshake evidence: {handshake_artifact}",
+                f"Routing trace:      {trace_artifact}",
+                f"Provider telemetry: {telemetry_artifact}",
+                f"Nexus response:     {response_artifact}",
             )
         )
 
         checks = [
             _check(
-                "Moon Source carries a sufficient relevant evidence set",
-                moon_score.get("status") == "PASS",
+                "Attribution stimulus contains no hidden routing bumper",
+                not result.get("routing_bumpers"),
+                (),
+                tuple(result.get("routing_bumpers") or ()),
+            ),
+            _check(
+                "Initial Nexus provider round exposes multiple legitimate read-only choices",
+                multiple_choices,
                 {
-                    "core_relevance_ok": True,
-                    "support_relevance_ok": True,
-                    "gold_bibliography_required": False,
+                    "business_brain.resolve_attribution": "visible",
+                    "memory.retrieve": "visible",
+                    "tool_results": 0,
                 },
+                {
+                    "tools": sorted(initial_tools),
+                    "tool_result_count": first_round.get("tool_result_count"),
+                },
+            ),
+            _check(
+                "Nexus independently proposes the Business Brain attribution tool",
+                model_selected_bb,
+                {"exactly_once": True, "provider_proposal_id": "non-empty"},
+                {
+                    "count": len(bb_executions),
+                    "provider_proposal_id": bb_execution.get("provider_proposal_id"),
+                },
+            ),
+            _check(
+                "Governed nexus.tools executes Business Brain exactly once",
+                bb_executed,
+                {"count": 1, "status": "SUCCEEDED"},
+                {
+                    "count": len(bb_executions),
+                    "status": bb_execution.get("status"),
+                    "execution_id": bb_execution.get("execution_id"),
+                },
+            ),
+            _check(
+                "Business Brain returns a passing bounded resolution",
+                bounded.get("status") == "PASS",
+                "PASS",
+                bounded.get("status"),
+            ),
+            _check(
+                "Business Brain result excludes raw HZK treaty payload from model context",
+                result.get("bounded_result_leaks_raw_hzk") is False
+                and int(result.get("bounded_result_bytes") or 0) <= 80_000,
+                {"raw_hzk_payload": False, "max_bytes": 80000},
+                {
+                    "raw_hzk_payload": result.get("bounded_result_leaks_raw_hzk"),
+                    "bytes": result.get("bounded_result_bytes"),
+                },
+            ),
+            _check(
+                "Moon Source selects sufficient relevant governed evidence",
+                moon_score.get("status") == "PASS" and bool(selected_sources),
+                {"status": "PASS", "selected_sources": ">0"},
                 {
                     "status": moon_score.get("status"),
-                    "core_relevance_coverage": moon_score.get("core_relevance_coverage"),
-                    "support_relevance_coverage": moon_score.get("support_relevance_coverage"),
-                    "legacy_groups_hit_diagnostic": moon_score.get("groups_hit"),
+                    "selected_sources": len(selected_sources),
                 },
             ),
             _check(
-                "Moon Source handshake evidence is inspectable and complete",
-                moon_handshake_complete,
+                "Moon Source evidence remains attributable by path and source hash",
+                source_identity_ok,
                 True,
                 {
-                    "complete": moon_handshake_complete,
-                    "selected_count": len(selected_moon),
-                    "artifact": handshake_artifact,
+                    "complete": source_identity_ok,
+                    "sources": [
+                        {"path": item.get("path"), "sha256": item.get("source_sha256")}
+                        for item in selected_sources
+                    ],
                 },
             ),
             _check(
-                "HZK independently verifies the selected knowledge packet",
+                "HZK verifies the selected evidence without state or authority transfer",
                 hzk.get("status") == "PASS"
-                and hzk.get("constitutional_status") == "PASS",
-                {"status": "PASS", "constitutional_status": "PASS"},
+                and hzk.get("constitutional_status") == "PASS"
+                and hzk.get("state_unchanged") is True
+                and hzk.get("authority_clean") is True,
+                {
+                    "status": "PASS",
+                    "constitutional_status": "PASS",
+                    "state_unchanged": True,
+                    "authority_clean": True,
+                },
                 {
                     "status": hzk.get("status"),
                     "constitutional_status": hzk.get("constitutional_status"),
-                },
-            ),
-            _check(
-                "HZK state remains unchanged and authority remains reference-only",
-                hzk.get("state_unchanged") is True
-                and hzk.get("authority_clean") is True,
-                {"state_unchanged": True, "authority_clean": True},
-                {
                     "state_unchanged": hzk.get("state_unchanged"),
                     "authority_clean": hzk.get("authority_clean"),
                 },
             ),
             _check(
-                "HZK passes forward relevant attribution/lineage/provenance/authority evidence",
-                result.get("hzk_relevance_ok") is True,
-                {"attribution", "lineage", "provenance", "authority"},
-                set(result.get("hzk_concepts") or ()),
-            ),
-            _check(
-                "HZK exports a treaty v0.3 Council grant with no mutation authority",
-                isinstance(hzk.get("treaty_grant"), Mapping)
-                and hzk.get("treaty_version") == "hzk-nexus/0.3"
-                and (hzk.get("treaty_grant") or {}).get("handoff_profile") == "COUNCIL"
-                and (hzk.get("treaty_grant") or {}).get("mutation_contract") == "NONE",
+                "HZK treaty v0.3 return receipt validates against exact grant and payload",
+                hzk.get("treaty_version") == "hzk-nexus/0.3"
+                and treaty_return.get("status") == "PASS"
+                and treaty_return.get("valid") is True,
+                {"treaty": "hzk-nexus/0.3", "valid": True},
                 {
-                    "contract_version": "hzk-nexus/0.3",
-                    "handoff_profile": "COUNCIL",
-                    "mutation_contract": "NONE",
-                },
-                {
-                    "contract_version": hzk.get("treaty_version"),
-                    "handoff_profile": (hzk.get("treaty_grant") or {}).get("handoff_profile")
-                    if isinstance(hzk.get("treaty_grant"), Mapping) else None,
-                    "mutation_contract": (hzk.get("treaty_grant") or {}).get("mutation_contract")
-                    if isinstance(hzk.get("treaty_grant"), Mapping) else None,
-                    "source_mode": hzk.get("source_mode"),
+                    "treaty": hzk.get("treaty_version"),
+                    "return_validation": treaty_return,
                 },
             ),
             _check(
-                "Historical/compatibility distinctions survive HZK admission",
+                "Historical and compatibility distinctions survive the governed workflow",
                 hzk.get("historical_distinction_preserved") is True,
                 True,
                 hzk.get("historical_distinction_preserved"),
             ),
             _check(
-                "Business Brain stores the resolution only as draft_memory",
-                (bb.get("status") or {}).get("state") == "draft_memory",
-                "draft_memory",
-                (bb.get("status") or {}).get("state"),
-            ),
-            _check(
-                "Business Brain source remains immutable with complete readback",
-                bb.get("source_immutable") is True
-                and bb.get("readback_complete") is True,
-                {"source_immutable": True, "readback_complete": True},
+                "Business Brain keeps the resolution at draft_memory with immutable source",
+                (bounded.get("business_brain") or {}).get("state") == "draft_memory"
+                and (bounded.get("business_brain") or {}).get("source_immutable") is True
+                and (bounded.get("business_brain") or {}).get("readback_complete") is True,
                 {
-                    "source_immutable": bb.get("source_immutable"),
-                    "readback_complete": bb.get("readback_complete"),
+                    "state": "draft_memory",
+                    "source_immutable": True,
+                    "readback_complete": True,
                 },
-            ),
-            _check(
-                "Nested Moon -> HZK -> Business Brain path and hash provenance is exact",
-                result.get("nested_provenance") is True
-                and result.get("nested_hash_provenance") is True,
-                {"paths": True, "hashes": True},
-                {
-                    "paths": result.get("nested_provenance"),
-                    "hashes": result.get("nested_hash_provenance"),
-                },
+                bounded.get("business_brain"),
             ),
             _check(
                 "Business Brain integrity verification passes",
-                (bb.get("integrity") or {}).get("status") == "ok",
+                (bounded.get("business_brain") or {}).get("integrity_status") == "ok",
                 "ok",
-                (bb.get("integrity") or {}).get("status"),
+                (bounded.get("business_brain") or {}).get("integrity_status"),
             ),
             _check(
-                "Kernelized Nexus releases the packet-only final synthesis",
-                nexus.get("status_code") == 200
-                and nexus.get("body_state") == "released"
-                and (nexus.get("parsed") or {}).get("status") == "PASS",
-                {"status_code": 200, "body_state": "released", "parsed.status": "PASS"},
+                "Kernelized Nexus releases the final answer after the tool round",
+                result.get("status_code") == 200
+                and result.get("state") == "released"
+                and bool(final_text),
+                {"status_code": 200, "state": "released", "text": "non-empty"},
                 {
-                    "status_code": nexus.get("status_code"),
-                    "body_state": nexus.get("body_state"),
-                    "parsed_status": (nexus.get("parsed") or {}).get("status"),
-                    "parse_error": nexus.get("parse_error"),
+                    "status_code": result.get("status_code"),
+                    "state": result.get("state"),
+                    "blocking_reason": result.get("blocking_reason"),
+                    "text_chars": len(final_text),
                 },
             ),
             _check(
-                "Nexus answer contains substantive attribution evidence",
-                answer_substantive,
-                "non-empty answer containing >=2 substantive attribution terms",
+                "Final Nexus answer contains substantive attribution resolution",
+                len(substantive_terms) >= 2,
+                "at least two attribution/lineage resolution terms",
+                sorted(substantive_terms),
+            ),
+            _check(
+                "Nexus receipt chain includes tools provider evidence correction and release",
+                receipt_chain_ok,
                 {
-                    "answer_chars": len(answer),
-                    "substantive_terms": nexus.get("answer_terms"),
+                    "nexus.tools",
+                    "nexus.provider",
+                    "nexus.evidence",
+                    "nexus.correction",
+                    "nexus.release",
+                },
+                receipt_ids,
+            ),
+            _check(
+                "Provider telemetry proves a second inference round consumed tool results",
+                second_round_ok,
+                {"rounds": ">=2", "first_tool_results": 0, "final_tool_results": ">=1"},
+                {
+                    "rounds": len(provider_telemetry),
+                    "first_tool_results": first_round.get("tool_result_count"),
+                    "final_tool_results": final_round.get("tool_result_count"),
                 },
             ),
             _check(
-                "Receipt trace records the contributing Nexus functions independently of answer prose",
-                trace_complete,
-                {"trace_complete": True, "provider_receipt_present": True},
-                {
-                    "trace_complete": trace_complete,
-                    "kernel_ids": nexus.get("kernel_ids"),
-                    "artifact": trace_artifact,
-                },
-            ),
-            _check(
-                "HZK validates Nexus return receipt against exact treaty grant and payload",
-                hzk_treaty_return.get("status") == "PASS"
-                and hzk_treaty_return.get("valid") is True,
-                {"status": "PASS", "valid": True},
-                hzk_treaty_return,
-            ),
-            _check(
-                "Final Nexus synthesis respects claim guardrails without requiring plumbing narration",
-                nexus.get("guardrails_ok") is True,
+                "Completed Nexus provider rounds expose token and latency telemetry",
+                telemetry_complete,
                 True,
-                nexus.get("guardrails_ok"),
+                {
+                    "complete": telemetry_complete,
+                    "rounds": provider_telemetry,
+                },
             ),
             _check(
-                "Original attribution incident is not supplied to final Nexus synthesis",
-                result.get("final_input_contains_original_incident") is False,
-                False,
-                result.get("final_input_contains_original_incident"),
+                "Full Business Brain handshake evidence remains inspectable outside model context",
+                bool(full_trace)
+                and bool(str(bb_trace_wrapper.get("trace_path") or "")),
+                {"full_trace": True, "trace_path": "present"},
+                {
+                    "full_trace": bool(full_trace),
+                    "trace_path": bb_trace_wrapper.get("trace_path"),
+                },
             ),
         ]
         return CaseResult(
             checks=checks,
             evidence={
+                "turn_id": result.get("turn_id"),
+                "scenario": result.get("scenario"),
+                "routing_bumpers": result.get("routing_bumpers"),
+                "tool_executions": tool_executions,
+                "provider_telemetry": provider_telemetry,
+                "bounded_result": bounded,
                 "moon_score": moon_score,
-                "selected_moon_sources": [item.get("path") for item in selected_moon],
                 "hzk": {
                     "source_revision": hzk.get("source_revision"),
-                    "source_mode": hzk.get("source_mode"),
                     "treaty_version": hzk.get("treaty_version"),
-                    "treaty_grant_sha256": hzk.get("treaty_grant_sha256"),
-                    "return_validation": hzk_treaty_return,
                     "packet_id": hzk.get("packet_id"),
-                    "constitutional_status": hzk.get("constitutional_status"),
                     "state_unchanged": hzk.get("state_unchanged"),
                     "authority_clean": hzk.get("authority_clean"),
-                    "historical_distinction_preserved": hzk.get("historical_distinction_preserved"),
-                    "concepts": result.get("hzk_concepts"),
+                    "historical_distinction_preserved": hzk.get(
+                        "historical_distinction_preserved"
+                    ),
+                    "return_validation": treaty_return,
                 },
-                "business_brain": {
-                    "artifact_id": (bb.get("status") or {}).get("artifact_id"),
-                    "artifact_version": (bb.get("status") or {}).get("artifact_version"),
-                    "state": (bb.get("status") or {}).get("state"),
-                    "integrity": (bb.get("integrity") or {}).get("status"),
+                "business_brain": bounded.get("business_brain"),
+                "nexus": {
+                    "state": result.get("state"),
+                    "status_code": result.get("status_code"),
+                    "blocking_reason": result.get("blocking_reason"),
+                    "text": final_text,
+                    "receipts": receipts,
                 },
-                "nexus": nexus,
-                "provenance_trace": trace,
-                "timings_ms": result.get("timings_ms"),
                 "artifacts": {
                     "handshake": handshake_artifact,
                     "trace": trace_artifact,
+                    "provider_telemetry": telemetry_artifact,
                     "nexus_response": response_artifact,
                 },
             },
