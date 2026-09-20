@@ -87,7 +87,7 @@ class BusinessBrainAttributionTool:
             f"[BB TOOL] governed execution START | turn={context.turn_id} "
             f"proposal={context.provider_proposal_id or 'NONE'}"
         )
-        compact, trace = resolve_attribution_for_nexus(
+        nexus_handoff, trace = resolve_attribution_for_nexus(
             query,
             moon_root=self.moon_root,
             correlation_id=context.correlation_id,
@@ -110,18 +110,18 @@ class BusinessBrainAttributionTool:
             "provider_proposal_id": context.provider_proposal_id,
             "trace_path": str(trace_path),
             "trace": trace,
-            "bounded_result": compact,
+            "nexus_handoff": nexus_handoff,
         }
 
-        transport = compact.get("transport") or {}
+        transport = nexus_handoff.get("transport") or {}
         _emit(
             "[BB TOOL] governed execution COMPLETE | "
             f"elapsed={elapsed_ms / 1000:.1f}s "
             f"raw_hzk={transport.get('hzk_payload_bytes')}B "
             f"grant={transport.get('hzk_grant_wire_bytes')}B "
-            f"returned={transport.get('bounded_result_bytes')}B"
+            f"returned={transport.get('nexus_tool_result_bytes')}B"
         )
-        return self.tool_result_factory("SUCCEEDED", compact)
+        return self.tool_result_factory("SUCCEEDED", nexus_handoff)
 
     def trace_for_turn(self, turn_id: str) -> Mapping[str, Any] | None:
         value = self._traces.get(turn_id)
@@ -167,19 +167,15 @@ def register_business_brain_tool(
             "type": "object",
             "required": [
                 "status",
-                "resolution",
-                "sources",
-                "hzk",
-                "business_brain",
+                "hzk_grant",
+                "moon_business_brain_handoff",
                 "provenance",
                 "transport",
             ],
             "properties": {
                 "status": {"type": "string"},
-                "resolution": {"type": "object"},
-                "sources": {"type": "array", "maxItems": 20},
-                "hzk": {"type": "object"},
-                "business_brain": {"type": "object"},
+                "hzk_grant": {"type": "object"},
+                "moon_business_brain_handoff": {"type": "object"},
                 "provenance": {"type": "object"},
                 "transport": {"type": "object"},
             },
