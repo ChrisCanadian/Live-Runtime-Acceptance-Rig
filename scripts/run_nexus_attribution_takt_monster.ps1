@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$NDKA_SHA = "3d477a4fadeb55a016f469b34c1315099668dedd"
+$NDKA_SHA = "2de727f4b5a77f9f2d2acf39d3d04956d0b2be3a"
 $PRODUCTION_SHA = "2514a11366f8e7f345bb854c0cfaee8c7b40dddd"
 $V5_SHA = "176b444c096f5f04b8ed12c01d4180d22d9144fe"
 $BUSINESS_BRAIN_SHA = "81cc09f064e741a828a5e29fba0bcfee1487e4ea"
@@ -311,6 +311,7 @@ $dockerArgs = @(
     "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
     "-e", "NEXUS_RIG_PRODUCTION_CHECKOUT=/production",
     "-e", "NEXUS_RIG_V5_CHECKOUT=/v5",
+    "-e", "NEXUS_RIG_V5_EXPECTED_SHA=$V5_SHA",
     "-e", "NEXUS_RIG_LEGACY_DB_PATH=/run/state/legacy.sqlite",
     "-e", "NEXUS_RIG_ARTIFACT_PATH=/run/artifacts",
     "-e", "NEXUS_RIG_RUNTIME_PROFILE=development_fixture",
