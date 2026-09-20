@@ -271,6 +271,10 @@ def _run_attribution_chain_impl(runtime: Any, *, marker: str) -> dict[str, Any]:
         key: hzk.get(key)
         for key in (
             "source_revision",
+            "source_mode",
+            "treaty_version",
+            "treaty_grant",
+            "treaty_grant_sha256",
             "packet_id",
             "payload_sha256",
             "manifest_sha256",
