@@ -152,6 +152,15 @@ class Console:
             if self.verbose:
                 self._line(f"  Display error: {type(exc).__name__}: {exc}")
 
+    def operator_output(self, lines: Any) -> None:
+        """Render deliberate human-facing case output without enabling verbose noise."""
+
+        if self.quiet:
+            return
+        self._line()
+        for line in tuple(lines or ()):
+            self._line(str(line))
+
     def diagnostic(self, label: str, value: Any) -> None:
         if self.verbose and not self.quiet:
             self._line(f"  {label}: {value!r}")
