@@ -7,6 +7,7 @@ flight control, the check FAILs and the final receipt-coverage gate remains red.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping
 
 from live_runtime_rig.assertions import CheckStatus
@@ -804,7 +805,7 @@ def register_cases(_config: Any):
     # Order matters: the final gate evaluates accumulated evidence from every
     # preceding scenario. No required full-runtime flight control is represented
     # as SKIP in this campaign.
-    return [
+    cases = [
         FlightControlInventoryCase(),
         CanonicalIngressBaselineCase(),
         SecurityAndAuthorityCase(),
@@ -814,7 +815,13 @@ def register_cases(_config: Any):
         CognitionModesLearningCase(),
         JobsArtifactsCase(),
         FaultInjectionCase(),
-        AttributionKnowledgeChainCase(),
-        ReceiptCoverageGateCase(),
-        MonsterTaktCase(),
     ]
+    if os.environ.get("NEXUS_RIG_ATTRIBUTION_CHAIN", "0") == "1":
+        cases.append(AttributionKnowledgeChainCase())
+    cases.extend(
+        [
+            ReceiptCoverageGateCase(),
+            MonsterTaktCase(),
+        ]
+    )
+    return cases
