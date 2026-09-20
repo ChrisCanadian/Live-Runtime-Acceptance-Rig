@@ -415,4 +415,4 @@ def test_public_safe_evidence_bundle_serializes_and_redacts_sets(tmp_path) -> No
         {"values": {"secret-value", "visible"}},
     )
     payload = json.loads((bundle.root / "artifact.json").read_text(encoding="utf-8"))
-    assert payload["values"] == ["[REDACTED]", "visible"]
+    assert payload["values"] == ["[REDACTED_VALUE]", "visible"]
