@@ -401,6 +401,32 @@ try {
     $env:PYTHONPATH = $OldPythonPath
 }
 
+$NexusResponseArtifact = Get-ChildItem $EvidenceRoot -Filter "NEXUS_RESPONSE.md" -File -Recurse -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$HandshakeArtifact = Get-ChildItem $EvidenceRoot -Filter "ATTRIBUTION_HANDSHAKE.json" -File -Recurse -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$TraceArtifact = Get-ChildItem $EvidenceRoot -Filter "ATTRIBUTION_TRACE.json" -File -Recurse -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+
+if ($null -ne $NexusResponseArtifact) {
+    Write-Host ""
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    Write-Host " NEXUS ACTUAL RESPONSE" -ForegroundColor Cyan
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    Get-Content $NexusResponseArtifact.FullName -Raw
+    Write-Host ""
+    Write-Host "Saved: $($NexusResponseArtifact.FullName)" -ForegroundColor DarkGray
+}
+if ($null -ne $HandshakeArtifact) {
+    Write-Host "Handshake evidence: $($HandshakeArtifact.FullName)" -ForegroundColor DarkGray
+}
+if ($null -ne $TraceArtifact) {
+    Write-Host "Attribution trace:  $($TraceArtifact.FullName)" -ForegroundColor DarkGray
+}
+
 # Re-verify that the pinned cached donor checkout was not modified while the
 # writable disposable runtime clone was in use.
 $CachedProductionSha = (git -C $ProductionRoot rev-parse HEAD).Trim()
