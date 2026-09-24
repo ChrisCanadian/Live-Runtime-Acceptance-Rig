@@ -41,7 +41,8 @@ def test_monster_uses_canonical_surface_neutral_ingress():
     assert "build_fastapi_runtime_router" in source
     assert '"/v1/chat/completions"' in source
     assert "build_discord_host_adapter" not in source
-    assert "CanonicalRuntimeIngress" in source
+    assert "service = assembled.host.runtime_ingress" in source
+    assert "CanonicalRuntimeIngress(" not in source
 
 
 def test_monster_launcher_is_live_docker_and_not_discord_surface_lane():
