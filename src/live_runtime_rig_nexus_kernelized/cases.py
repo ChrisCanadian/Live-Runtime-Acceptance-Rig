@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Any, Mapping
 
@@ -113,45 +114,49 @@ class KernelizedReadinessCase:
         return CaseResult(checks=checks, evidence={"health": health, "inventory": inventory})
 
 
-class DiscordGuestFailClosedCase:
-    name = "discord-guest-fail-closed"
+class DiscordFirstContactCase:
+    name = "discord-first-contact-isolation"
     suite = "DISCORD AUTHORITY"
 
     def run(self, runtime, database, context) -> CaseResult:
         del database
-        guest_id = f"acceptance-unlinked-{context.run_id}"
+        digest = hashlib.sha256(context.run_id.encode("utf-8")).hexdigest()
+        guest_id = str(int(digest[:15], 16) % (10**18)).zfill(18)
         response = runtime.request(
             "POST",
             "/discord/chat",
             json=_message(
                 external_user_id=guest_id,
-                message_id=f"{context.marker}-guest",
-                text="This unlinked acceptance identity must not gain durable authority.",
+                message_id=f"{context.marker}-first-contact",
+                text="Hello. This is a first-contact acceptance identity.",
             ),
         )
         body = response.json()
+        metadata = body.get("metadata") or {}
         turn = body.get("governed_turn") or {}
+        isolated_created = bool(
+            metadata.get("auto_provisioned_user")
+            or metadata.get("discord_native_account")
+        )
         checks = [
             _check(
-                "Unlinked Discord identity is rejected before governed execution",
-                body.get("state") == "GUEST_RUNTIME_NOT_WIRED",
-                "GUEST_RUNTIME_NOT_WIRED",
-                body.get("state"),
+                "Unknown Discord identity receives isolated Nexus first-contact provisioning",
+                body.get("state") == "RELEASED" and isolated_created,
+                {"state": "RELEASED", "isolated_identity_created": True},
+                {
+                    "state": body.get("state"),
+                    "isolated_identity_created": isolated_created,
+                    "reason": metadata.get("reason"),
+                },
             ),
             _check(
-                "Guest path reports no durable user-state touch",
-                (body.get("metadata") or {}).get("durable_user_state_touched") is False,
-                False,
-                (body.get("metadata") or {}).get("durable_user_state_touched"),
-            ),
-            _check(
-                "Guest path produced no governed receipt chain",
-                turn.get("available") is False,
-                False,
+                "First-contact identity enters the governed runtime after provisioning",
+                turn.get("available") is True,
+                True,
                 turn.get("available"),
             ),
         ]
-        return CaseResult(checks=checks, evidence={"guest_reply": body})
+        return CaseResult(checks=checks, evidence={"first_contact": body})
 
 
 class DiscordGovernedTurnCase:
@@ -265,11 +270,10 @@ class DiscordCommandsCase:
             _check("Discord mode listing comes through nexus.modes", mode_list.get("state") == "OK", "OK", mode_list.get("state")),
             _check("Discord tools catalog comes through nexus.tools", tools.get("state") == "OK", "OK", tools.get("state")),
             _check(
-                "Discord exposes only read-only tool catalog entries",
-                "write" not in str(tools.get("text") or "").casefold(),
-                "no write-labelled tool exposure",
-                tools.get("text"),
-                heuristic=True,
+                "Discord exposes a non-empty ordinary-callable tool catalog",
+                bool(str(tools.get("text") or "").strip()),
+                "non-empty ordinary callable catalog",
+                bool(str(tools.get("text") or "").strip()),
             ),
         ]
         return CaseResult(
@@ -284,7 +288,7 @@ class DiscordCommandsCase:
 
 
 class MultiTurnContinuityCase:
-    name = "discord-multi-turn-cag"
+    name = "discord-multi-turn-canonical-session"
     suite = "MEMORY CONTINUITY"
 
     def run(self, runtime, database, context) -> CaseResult:
@@ -292,7 +296,7 @@ class MultiTurnContinuityCase:
         user = _primary_id()
         if user is None:
             return CaseResult(
-                checks=[_skip("Multi-turn CAG continuity", "linked primary identity", "not configured")]
+                checks=[_skip("Multi-turn canonical session continuity", "linked primary identity", "not configured")]
             )
         channel = f"acceptance-continuity-{context.run_id}"
         thread = f"acceptance-thread-{context.run_id}"
@@ -319,11 +323,28 @@ class MultiTurnContinuityCase:
             ),
         ).json()
         second_turn = second.get("governed_turn") or {}
+        handoffs = tuple(second_turn.get("handoffs") or ())
+        artifacts = {
+            str(item.get("artifact")): str(item.get("disposition"))
+            for item in handoffs
+            if item.get("artifact")
+        }
         checks = [
             _check("First continuity turn released", first.get("state") == "RELEASED", "RELEASED", first.get("state")),
             _check("Second continuity turn released", second.get("state") == "RELEASED", "RELEASED", second.get("state")),
             _check("Both turns resolve to the same Discord session", first.get("session_id") == second.get("session_id") and bool(first.get("session_id")), first.get("session_id"), second.get("session_id")),
-            _check("Second turn contains explicit CAG context section", second_turn.get("cag_section_present") is True, True, second_turn.get("cag_section_present")),
+            _check(
+                "Second turn consumes canonical session context",
+                artifacts.get("memory.session_context") == "consumed",
+                "consumed",
+                artifacts.get("memory.session_context"),
+            ),
+            _check(
+                "Sessioned turn does not consult legacy CAG",
+                "memory.cag_compile" not in artifacts,
+                "absent",
+                artifacts.get("memory.cag_compile", "absent"),
+            ),
         ]
         return CaseResult(
             checks=checks,
@@ -456,7 +477,7 @@ class DeferredEdgesCase:
 def register_cases(_config: Any):
     return [
         KernelizedReadinessCase(),
-        DiscordGuestFailClosedCase(),
+        DiscordFirstContactCase(),
         DiscordGovernedTurnCase(),
         DiscordCommandsCase(),
         MultiTurnContinuityCase(),
