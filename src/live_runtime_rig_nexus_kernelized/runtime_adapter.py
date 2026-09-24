@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -28,56 +27,31 @@ class AdapterResponse:
         return self.body
 
 
-class _RecordingTurnRunner:
-    """Transparent recorder around the real governed coordinator."""
+class _RecordingRuntimeIngress:
+    """Transparent recorder around the canonical surface-neutral ingress."""
 
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
         self.last_bundle: Any | None = None
 
-    async def run(self, request: Any, context: Any) -> Any:
-        bundle = await self.delegate.run(request, context)
-        self.last_bundle = bundle
-        return bundle
-
-
-class _CanonicalIdentityOwnerResolver:
-    """Resolve owner authority from V5 state, with explicit fixture fallback only."""
-
-    def __init__(self, v5_runtime: Any, fixture_owners: Mapping[str, str]) -> None:
-        self._v5 = v5_runtime
-        self._fixture_owners = dict(fixture_owners)
-
-    async def resolve_owner_key(self, *, user_id: int, external_scope_id: str) -> str:
-        del external_scope_id
-        rows: list[Any] = []
-        try:
-            with self._v5.database.read() as connection:
-                rows = connection.execute(
-                    """
-                    SELECT DISTINCT owner_key
-                    FROM canonical_principal_mappings
-                    WHERE nexus_user_id = ? AND status IN ('OWNER_APPROVED','ACTIVE')
-                    ORDER BY owner_key
-                    """,
-                    (str(user_id),),
-                ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
-        owners = tuple(str(row["owner_key"]) for row in rows)
-        if len(owners) == 1:
-            return owners[0]
-        if len(owners) > 1:
-            raise PermissionError("AMBIGUOUS_CANONICAL_IDENTITY_OWNER")
-        return self._fixture_owners.get(str(user_id), "")
+    async def run_chat(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self.delegate.run_chat(*args, **kwargs)
+        self.last_bundle = getattr(result, "bundle", None)
+        return result
 
 
 class KernelizedNexusRuntimeAdapter:
     def __init__(self, config: RigConfig) -> None:
         self.config = config
         self.production_checkout = Path(os.environ["NEXUS_RIG_PRODUCTION_CHECKOUT"]).resolve()
-        self.v5_checkout = Path(os.environ["NEXUS_RIG_V5_CHECKOUT"]).resolve()
-        self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
+        raw_v5_checkout = os.environ.get("NEXUS_RIG_V5_CHECKOUT", "").strip()
+        self.v5_checkout = (
+            None
+            if not raw_v5_checkout or raw_v5_checkout.upper() == "STAGED"
+            else Path(raw_v5_checkout).resolve()
+        )
+        self.v5_expected_sha = os.environ.get("NEXUS_RIG_V5_EXPECTED_SHA", "").strip() or None
+        self.canonical_db = Path(config.database_path).resolve()
         production_manifest = os.environ.get("NEXUS_RIG_PRODUCTION_SOURCE_MANIFEST")
         v5_authority = os.environ.get("NEXUS_RIG_V5_SOURCE_AUTHORITY")
         self.production_source_manifest = (
@@ -95,43 +69,34 @@ class KernelizedNexusRuntimeAdapter:
         )
         self.provider_kind = os.environ.get("NEXUS_RIG_PROVIDER_KIND", "fake")
         self.user_tz_name = os.environ.get("NEXUS_RIG_USER_TZ", "America/Toronto")
-        raw_owners = os.environ.get("NEXUS_RIG_IDENTITY_OWNERS_JSON", "{}")
-        parsed = json.loads(raw_owners)
-        if not isinstance(parsed, dict):
-            raise ValueError("NEXUS_RIG_IDENTITY_OWNERS_JSON must be an object")
-        self.fixture_owners = {str(key): str(value) for key, value in parsed.items()}
         self._assembled: Any | None = None
         self._discord: Any | None = None
-        self._recorder: _RecordingTurnRunner | None = None
+        self._recorder: _RecordingRuntimeIngress | None = None
 
     def _configure_v5_environment(self) -> None:
-        migrations = self.v5_checkout / "migrations"
-        if not migrations.is_dir():
-            raise FileNotFoundError(f"V5 migrations directory not found: {migrations}")
         self.artifact_path.mkdir(parents=True, exist_ok=True)
-        os.environ["NEXUS_DB_PATH"] = str(self.config.database_path)
-        os.environ["NEXUS_MIGRATIONS_PATH"] = str(migrations)
+        os.environ["NEXUS_DB_PATH"] = str(self.canonical_db)
+        if self.v5_checkout is not None:
+            migrations = self.v5_checkout / "migrations"
+            if not migrations.is_dir():
+                raise FileNotFoundError(f"V5 migrations directory not found: {migrations}")
+            os.environ["NEXUS_MIGRATIONS_PATH"] = str(migrations)
+        else:
+            os.environ.pop("NEXUS_MIGRATIONS_PATH", None)
         os.environ["NEXUS_ARTIFACT_PATH"] = str(self.artifact_path)
         os.environ["NEXUS_RUNTIME_PROFILE"] = self.runtime_profile
         os.environ["NEXUS_PROVIDER_KIND"] = self.provider_kind
         os.environ.setdefault("NEXUS_V2_PRODUCT_MODE", "structural_fixture")
 
-    @staticmethod
-    def _legacy_connection_factory(path: Path):
-        def factory() -> sqlite3.Connection:
-            return sqlite3.connect(path)
-
-        return factory
-
     def start(self) -> None:
         if self._assembled is not None:
             raise RuntimeError("kernelized Nexus runtime adapter already started")
-        for path, label in (
-            (self.production_checkout, "production donor source"),
-            (self.v5_checkout, "V5 assembly source"),
-        ):
-            if not path.is_dir():
-                raise FileNotFoundError(f"{label} not found: {path}")
+        if not self.production_checkout.is_dir():
+            raise FileNotFoundError(
+                f"production donor source not found: {self.production_checkout}"
+            )
+        if self.v5_checkout is not None and not self.v5_checkout.is_dir():
+            raise FileNotFoundError(f"V5 assembly source not found: {self.v5_checkout}")
         if self.production_source_manifest is not None and not self.production_source_manifest.is_file():
             raise FileNotFoundError(
                 f"production source manifest not found: {self.production_source_manifest}"
@@ -140,12 +105,14 @@ class KernelizedNexusRuntimeAdapter:
             raise FileNotFoundError(
                 f"V5 source authority record not found: {self.v5_source_authority}"
             )
-        if not self.legacy_db.is_file():
-            raise FileNotFoundError(f"legacy TEST database not found: {self.legacy_db}")
+        if not self.canonical_db.is_file():
+            raise FileNotFoundError(
+                f"canonical TEST database not found: {self.canonical_db}"
+            )
 
         self._configure_v5_environment()
 
-        from nexus_ndka.host.bootstrap import build_discord_host_adapter
+        from nexus_ndka.host.kernelized_compat import KernelizedV5CompatibilityRuntime
         from nexus_ndka.host.runtime_bootstrap import (
             KernelizedTestRuntimeConfig,
             build_kernelized_test_runtime,
@@ -154,26 +121,21 @@ class KernelizedNexusRuntimeAdapter:
         assembled = build_kernelized_test_runtime(
             KernelizedTestRuntimeConfig(
                 production_checkout=self.production_checkout,
-                legacy_state_db_path=self.legacy_db,
+                legacy_state_db_path=self.canonical_db,
                 v5_checkout=self.v5_checkout,
+                v5_expected_sha=self.v5_expected_sha,
                 production_source_manifest_path=self.production_source_manifest,
                 v5_source_authority_path=self.v5_source_authority,
                 allow_mode_lifecycle_writes=True,
                 allow_legacy_memory_writes=False,
-                allow_canonical_memory_writes=False,
+                allow_canonical_memory_writes=True,
             )
         )
-        owner_resolver = _CanonicalIdentityOwnerResolver(
-            assembled.v5_runtime, self.fixture_owners
-        )
-        discord = build_discord_host_adapter(
-            assembled.host.registry,
-            connection_factory=self._legacy_connection_factory(self.legacy_db),
-            identity_owner_resolver=owner_resolver,
-            user_tz_name=self.user_tz_name,
-        )
-        recorder = _RecordingTurnRunner(assembled.host.turn_runner)
-        discord.turn_runner = recorder
+        compatibility = KernelizedV5CompatibilityRuntime(assembled)
+        discord = compatibility.discord_adapter
+        discord.user_tz_name = self.user_tz_name
+        recorder = _RecordingRuntimeIngress(assembled.host.runtime_ingress)
+        discord.runtime_ingress = recorder
         self._assembled = assembled
         self._discord = discord
         self._recorder = recorder
@@ -183,7 +145,7 @@ class KernelizedNexusRuntimeAdapter:
         self._recorder = None
         self._assembled = None
 
-    def _require_started(self) -> tuple[Any, Any, _RecordingTurnRunner]:
+    def _require_started(self) -> tuple[Any, Any, _RecordingRuntimeIngress]:
         if self._assembled is None or self._discord is None or self._recorder is None:
             raise RuntimeError("kernelized Nexus runtime adapter has not been started")
         return self._assembled, self._discord, self._recorder
@@ -330,7 +292,7 @@ class KernelizedNexusRuntimeAdapter:
             "discord-model-read-only",
             "discord-tools-read-only-catalog",
             "governed-receipt-chain",
-            "cag-context-observation",
+            "canonical-session-context-observation",
             "multi-user-scope",
         )
 
