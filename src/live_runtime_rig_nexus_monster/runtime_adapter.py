@@ -191,7 +191,7 @@ class KernelizedMonsterRuntimeAdapter:
             else Path(raw_v5_checkout).resolve()
         )
         self.v5_expected_sha = os.environ.get("NEXUS_RIG_V5_EXPECTED_SHA", "").strip() or None
-        self.legacy_db = Path(os.environ["NEXUS_RIG_LEGACY_DB_PATH"]).resolve()
+        self.legacy_db = Path(config.database_path).resolve()
         self.artifact_path = Path(
             os.environ.get("NEXUS_RIG_ARTIFACT_PATH", str(config.evidence_dir / "nexus-artifacts"))
         ).resolve()
@@ -631,10 +631,7 @@ class KernelizedMonsterRuntimeAdapter:
             KernelizedTestRuntimeConfig,
             build_kernelized_test_runtime,
         )
-        from nexus_ndka.host.runtime_ingress import (
-            CanonicalRuntimeIngress,
-            build_fastapi_runtime_router,
-        )
+        from nexus_ndka.host.runtime_ingress import build_fastapi_runtime_router
 
         # The monster lane owns disposable state, so all runtime write paths are
         # enabled. Source databases remain untouched because the launcher mounts
@@ -649,7 +646,7 @@ class KernelizedMonsterRuntimeAdapter:
                 provider_runtime_controls_factory=self._provider_runtime_controls,
                 tool_deadline_ms=int(os.environ.get("NEXUS_RIG_TOOL_DEADLINE_MS", "300000")),
                 allow_mode_lifecycle_writes=True,
-                allow_legacy_memory_writes=True,
+                allow_legacy_memory_writes=False,
                 allow_canonical_memory_writes=True,
             )
         )
@@ -670,7 +667,7 @@ class KernelizedMonsterRuntimeAdapter:
                 artifact_dir=self.artifact_path,
             )
 
-        service = CanonicalRuntimeIngress(assembled.host.turn_runner)
+        service = assembled.host.runtime_ingress
 
         async def require_principal(request: Request):
             label = request.headers.get("X-Nexus-Rig-Principal", "primary")
