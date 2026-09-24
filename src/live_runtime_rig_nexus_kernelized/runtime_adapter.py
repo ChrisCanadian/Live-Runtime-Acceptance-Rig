@@ -176,6 +176,17 @@ class KernelizedNexusRuntimeAdapter:
             for section in sections
             if getattr(section, "section_id", None)
         )
+        handoffs = []
+        for handoff in tuple(getattr(getattr(bundle, "inference", None), "pre_inference", None).handoffs if getattr(getattr(bundle, "inference", None), "pre_inference", None) is not None else ()):
+            disposition = getattr(getattr(handoff, "disposition", None), "value", None)
+            handoffs.append(
+                {
+                    "source_kernel": getattr(handoff, "source_kernel", None),
+                    "target_kernel": getattr(handoff, "target_kernel", None),
+                    "artifact": getattr(handoff, "artifact", None),
+                    "disposition": disposition,
+                }
+            )
         state = getattr(getattr(bundle, "state", None), "value", None)
         return {
             "available": True,
@@ -186,6 +197,7 @@ class KernelizedNexusRuntimeAdapter:
             ),
             "context_section_ids": section_ids,
             "cag_section_present": "memory.cag" in section_ids,
+            "handoffs": tuple(handoffs),
             "visible_tool_count": len(tuple(getattr(inference, "visible_tools", ()) or ())),
             "provider_id": getattr(provider, "provider_id", None),
             "model_id": getattr(provider, "model_id", None),
@@ -250,7 +262,25 @@ class KernelizedNexusRuntimeAdapter:
 
         if normalized_method == "POST" and path == "/discord/chat":
             recorder.last_bundle = None
-            reply = asyncio.run(discord.handle_chat(message))
+            try:
+                reply = asyncio.run(discord.handle_chat(message))
+            except PermissionError as exc:
+                if str(exc) != "DISCORD_CANONICAL_ONBOARDING_REQUIRED":
+                    raise
+                return AdapterResponse(
+                    409,
+                    {
+                        "state": "ONBOARDING_REQUIRED",
+                        "text": "",
+                        "session_id": discord.session_id(message),
+                        "correlation_id": discord.correlation_id(message),
+                        "metadata": {
+                            "reason": "DISCORD_CANONICAL_ONBOARDING_REQUIRED",
+                            "durable_user_state_touched": False,
+                        },
+                        "governed_turn": {"available": False},
+                    },
+                )
             body = self._reply_body(reply)
             body["governed_turn"] = dict(self._bundle_evidence(recorder.last_bundle))
             status = 200
