@@ -65,10 +65,10 @@ def test_runtime_preflight_failure_lists_downstream_not_run_stages(tmp_path) -> 
     not_run = {(item["suite"], item["name"]) for item in report["not_run"]}
     assert ("PREFLIGHT", "Direct readiness probe passed") in not_run
     assert ("KERNELIZED HOST", "kernelized-readiness") in not_run
-    assert ("DISCORD AUTHORITY", "discord-guest-fail-closed") in not_run
+    assert ("DISCORD AUTHORITY", "discord-first-contact-isolation") in not_run
     assert ("DISCORD GOVERNED TURN", "discord-governed-turn") in not_run
     assert ("DISCORD SHARED KERNELS", "discord-shared-commands") in not_run
-    assert ("MEMORY CONTINUITY", "discord-multi-turn-cag") in not_run
+    assert ("MEMORY CONTINUITY", "discord-multi-turn-canonical-session") in not_run
     assert ("USER ISOLATION", "discord-cross-user-isolation") in not_run
     assert ("TOOLS EVIDENCE LOOP", "governed-tool-loop") in not_run
     assert ("DEFERRED INTEGRATION", "explicit-deferred-edges") in not_run
