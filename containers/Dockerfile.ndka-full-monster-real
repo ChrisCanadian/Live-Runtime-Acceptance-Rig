@@ -1,0 +1,94 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.12.10-slim-bookworm@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/rig/src:/ndka/src:/v5/src \
+    HF_HOME=/opt/nexus/hf-cache \
+    STANZA_RESOURCES_DIR=/opt/nexus/stanza-resources
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=v5 /manifests/v2_runtime_requirements.lock /opt/nexus/v2-runtime-requirements.lock
+
+RUN python -m pip install \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      -r /opt/nexus/v2-runtime-requirements.lock
+
+# The local Monster exercises the actual production NLP pipeline, not the
+# low-memory VM's static/lightweight fallback. Bake the immutable model assets
+# into the image so runtime classification is local/offline while APIFree.ai
+# remains the real response-model provider.
+RUN python - <<'PY'
+from huggingface_hub import snapshot_download
+import stanza
+
+stanza.download(
+    "en",
+    processors="tokenize,pos,lemma",
+    model_dir="/opt/nexus/stanza-resources",
+    verbose=False,
+)
+snapshot_download(repo_id="facebook/bart-large-mnli")
+snapshot_download(repo_id="j-hartmann/emotion-english-distilroberta-base")
+PY
+
+# Keep the already-expensive BART/DistilRoBERTa asset layer cacheable. The
+# production local NLP path also imports SentenceTransformer through
+# LabelLearningEngine/ProductionNLPPipeline, so add that compatible dependency
+# and its MiniLM asset in separate layers above the preserved model cache.
+RUN python -m pip install "sentence-transformers==6.0.1" \
+    && python -m pip check
+
+RUN python - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download(repo_id="sentence-transformers/all-MiniLM-L6-v2")
+PY
+
+# Prove the baked Linux image can import the production NLP dependency closure
+# and resolve every required model asset with networking disabled. The runtime
+# adapter still performs the deeper end-to-end AnalysisManager classification
+# preflight against isolated User 18 state before the Monster campaign starts.
+RUN HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python - <<'PY'
+from huggingface_hub import snapshot_download
+import stanza
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+for repo_id in (
+    "facebook/bart-large-mnli",
+    "j-hartmann/emotion-english-distilroberta-base",
+    "sentence-transformers/all-MiniLM-L6-v2",
+):
+    snapshot_download(repo_id=repo_id, local_files_only=True)
+
+stanza.Pipeline(
+    "en",
+    processors="tokenize,pos,lemma",
+    download_method=None,
+    verbose=False,
+)
+SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+SentimentIntensityAnalyzer()
+assert callable(pipeline)
+print("MONSTER_NLP_IMAGE_PREFLIGHT=VERIFIED")
+PY
+
+# Local fixture runs mount exact Git checkouts at these paths. Docker Desktop can
+# present bind-mounted repositories with ownership that differs from the
+# container user, so trust only the two fixed donor locations used by the rig.
+RUN git config --system --add safe.directory /production \
+    && git config --system --add safe.directory /v5 \
+    && git config --system --add safe.directory /ndka \
+    && git config --system --add safe.directory /rig \
+    && git config --system --add safe.directory /business-brain \
+    && git config --system --add safe.directory /moon-source
+
+WORKDIR /rig
+
+ENTRYPOINT ["python", "-m", "live_runtime_rig"]

@@ -32,3 +32,5 @@ site/
 *.sqlite3-*
 *.backup
 *.backup.*
+
+.kernelized-local/

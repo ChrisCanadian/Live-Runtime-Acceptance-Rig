@@ -64,11 +64,14 @@ def test_complete_toy_campaign_passes_and_compares_protected_state(tmp_path) -> 
     assert run["acceptance_status"] == "PASS"
     assert run["summary"]["failed"] == 0
     assert run["summary"]["skipped"] == 1
+    assert run["summary"]["not_run"] == 0
     assert any(
         check["name"] == "Protected state remained unchanged"
         and check["status"] == "PASS"
         for check in run["checks"]
     )
+    before = json.loads((runner.evidence.root / "database_before.json").read_text(encoding="utf-8"))
+    assert before["protected_state_baseline"] == "post_runtime_initialization"
     assert len(cleanup["entries"]) == 7
     assert cleanup["automatic_cleanup_performed"] is False
 
@@ -120,6 +123,8 @@ def test_early_database_failure_still_writes_complete_evidence(tmp_path) -> None
     )
     assert run["framework_status"] == "COMPLETED"
     assert run["acceptance_status"] == "FAIL"
+    assert run["summary"]["failed"] == 1
+    assert run["summary"]["not_run"] == 7
     error = json.loads(
         (runner.evidence.root / "errors" / "database_preflight.json").read_text(
             encoding="utf-8"
@@ -142,6 +147,7 @@ def test_quiet_prints_only_final_summary(tmp_path) -> None:
     output = stream.getvalue()
     assert "FRAMEWORK: COMPLETED" in output
     assert "RESULT: PASS" in output
+    assert "Not run: 0" in output
     assert "LIVE RUNTIME ACCEPTANCE RIG" not in output
     assert "[00/" not in output
     assert "[PASS]" not in output
@@ -161,3 +167,106 @@ def test_verbose_includes_check_diagnostics(tmp_path) -> None:
     assert "Expected:" in output
     assert "Observed:" in output
     assert "cleanup_manifest.json" in output
+
+
+
+def test_cockpit_initialization_summary_is_compact_and_keeps_detail_pointer() -> None:
+    stream = io.StringIO()
+    console = Console(stream=stream)
+    console.initialization(
+        health={
+            "registered": tuple(f"nexus.kernel.{index}" for index in range(17)),
+            "failed_kernel_ids": (),
+            "degraded_kernel_ids": (),
+            "real_provider": True,
+            "provider_id": "apifree",
+            "model_id": "qwen/test",
+            "provider_probe": {
+                "status": "ok",
+                "provider_id": "apifree",
+                "model_id": "qwen/test",
+            },
+            "analysis_probe": {
+                "status": "ok",
+                "source": "production_full_nlp_local",
+                "latency_components": (
+                    "emotion_ms",
+                    "sentence_classification_ms",
+                    "stanza_ms",
+                    "total_ms",
+                ),
+                "latency_breakdown": {
+                    "total_ms": 1234.0,
+                    "stanza_ms": 234.0,
+                },
+            },
+            "rag_probe": {
+                "rag_initialized": True,
+                "embedding_dimensions": 768,
+                "conversation_vectors": 801,
+            },
+        },
+        startup_log_path="logs/runtime-start.log",
+    )
+    output = stream.getvalue()
+    assert "NEXUS RUNTIME INITIALIZATION" in output
+    assert "17/17 registered / READY" in output
+    assert "NLP:      READY / full local production pipeline" in output
+    assert "stanza=234ms" in output
+    assert "Provider: READY / apifree / qwen/test" in output
+    assert "RAG:      READY / 768d / 801 vectors" in output
+    assert "logs/runtime-start.log" in output
+    assert "Intent labels:" not in output
+    assert "Emotion ctx:" not in output
+
+
+
+def test_cockpit_initialization_never_raises_on_display_shape_drift() -> None:
+    stream = io.StringIO()
+    console = Console(stream=stream)
+
+    console.initialization(
+        health={
+            "registered": tuple(f"nexus.kernel.{index}" for index in range(17)),
+            "analysis_probe": {
+                "status": "ok",
+                "source": "production_full_nlp_local",
+                # This is the exact shape that caused ACCEPTANCE_20260919_054910_F6E9
+                # to fail inside the presentation layer.
+                "latency_components": (
+                    "emotion_ms",
+                    "sentence_classification_ms",
+                    "stanza_ms",
+                    "total_ms",
+                ),
+            },
+            "provider_probe": {"status": "ok"},
+            "rag_probe": {},
+        },
+        startup_log_path="logs/runtime-start.log",
+    )
+
+    output = stream.getvalue()
+    assert "NEXUS RUNTIME INITIALIZATION" in output
+    assert "17/17 registered / READY" in output
+    assert "display-only formatting error" not in output
+
+
+def test_cockpit_initialization_degrades_instead_of_failing_campaign() -> None:
+    class ExplodingMapping(dict):
+        def get(self, key, default=None):
+            if key == "analysis_probe":
+                raise ValueError("display-only boom")
+            return super().get(key, default)
+
+    stream = io.StringIO()
+    console = Console(stream=stream)
+
+    console.initialization(
+        health=ExplodingMapping(),
+        startup_log_path="logs/runtime-start.log",
+    )
+
+    output = stream.getvalue()
+    assert "Summary:  unavailable (display-only formatting error)" in output
+    assert "logs/runtime-start.log" in output
